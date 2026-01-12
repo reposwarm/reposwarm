@@ -15,7 +15,7 @@ RepoSwarm was born out of a hackathon we ran at Verbit, in which our team, compr
 
 RepoSwarm is an intelligent agentic-like engine that:
 
-- 🔍 Analyzes GitHub repositories using Claude Code SDK
+- 🔍 Analyzes GitHub repositories using OpenCode (multi-provider AI support)
 - 📝 Generates standardized `.arch.md` architecture files  
 - 🔄 Runs daily via Temporal workflows on repos with new commits
 - 💾 Caches results to avoid redundant analysis
@@ -31,11 +31,11 @@ RepoSwarm runs as a Temporal workflow that automatically processes repositories 
 graph TB
     A[Your Repositories] -->|New commits detected| B[repo-swarm]
     B -->|Temporal Workflow<br/>Daily execution| C[Clone & Analyze]
-    C -->|AI Analysis<br/>using Claude| D[Generate .arch.md]
+    C -->|AI Analysis<br/>via OpenCode| D[Generate .arch.md]
     D -->|Cache in DynamoDB or file system| E[Store Results]
     E -->|Auto-commit| F[Results Repository]
     F -->|Query with AI| G[Reports & Insights]
-    
+
     style A fill:#e1f5fe,color:#000
     style B fill:#fff3e0,color:#000
     style F fill:#f3e5f5,color:#000
@@ -50,7 +50,8 @@ graph TB
 ### Prerequisites
 
 - Python 3.12+
-- Claude API key
+- [OpenCode CLI](https://github.com/sst/opencode) installed
+- API key for your chosen AI provider (or use free OpenCode models)
 
 ### Installation
 
@@ -73,7 +74,7 @@ mise get-started
 
 This wizard will:
 - ✅ Create your `.env.local` file
-- ✅ Configure your Claude API key
+- ✅ Configure your AI provider API key
 - ✅ Set up GitHub integration (optional)
 - ✅ Configure Architecture Hub repository
 - ✅ Set up git user details
@@ -84,8 +85,11 @@ This wizard will:
 # Copy local environment template
 cp env.local.example .env.local
 
-# Edit .env.local with your Claude API key
-# ANTHROPIC_API_KEY=your_key_here
+# Edit .env.local with your provider settings
+# PROVIDER_ID=anthropic  # or: openai, google, opencode, groq
+# ANTHROPIC_API_KEY=your_key_here  # for Anthropic
+# OPENAI_API_KEY=your_key_here     # for OpenAI
+# Or use free models with PROVIDER_ID=opencode (no API key needed)
 ```
 
 **Install dependencies**:
@@ -124,6 +128,38 @@ mise investigate-one hello-world
 ```
 
 ## Configuration
+
+### AI Provider Setup
+
+RepoSwarm supports multiple AI providers through [OpenCode](https://github.com/sst/opencode):
+
+| Provider | Environment Variable | Models |
+|----------|---------------------|--------|
+| **opencode** (free) | None required | `gpt-5-nano`, `glm-4.7-free`, `minimax-m2.1-free` |
+| **anthropic** | `ANTHROPIC_API_KEY` | `claude-opus-4-5-20251101`, `claude-sonnet-4-5-20250929` |
+| **openai** | `OPENAI_API_KEY` | `gpt-4o`, `gpt-4o-mini`, `o1-preview` |
+| **google** | `GOOGLE_API_KEY` | `gemini-2.0-flash`, `gemini-1.5-pro` |
+| **groq** | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
+
+**Configure your provider** in `.env.local`:
+
+```bash
+# Choose your provider
+PROVIDER_ID=anthropic  # Options: opencode, anthropic, openai, google, groq
+
+# Set the appropriate API key for your provider
+ANTHROPIC_API_KEY=sk-ant-...
+# or
+OPENAI_API_KEY=sk-...
+# or use PROVIDER_ID=opencode for free models (no API key needed)
+```
+
+**Using free models** (no API key required):
+
+```bash
+PROVIDER_ID=opencode
+# That's it! Uses gpt-5-nano by default
+```
 
 ### Adding Repositories
 
@@ -358,7 +394,7 @@ The system uses Temporal for reliable workflow orchestration:
 3. **Type Detection**: Determine if it's backend, frontend, mobile, etc.
 4. **Structure Analysis**: Build a tree of files and directories
 5. **Prompt Selection**: Choose appropriate analysis prompts based on repo type
-6. **AI Analysis**: Send prompts + code context to Claude for analysis
+6. **AI Analysis**: Send prompts + code context to AI provider via OpenCode
 7. **Result Storage**: Save results to DynamoDB and generate markdown files
 8. **Cleanup**: Remove temporary files
 
@@ -384,10 +420,14 @@ mise monitor-temporal
 mise dev-server
 ```
 
-**Claude API Errors**
-- Verify API key: `echo $ANTHROPIC_API_KEY | head -c 10` (should show first 10 chars)
-- Check rate limits in your Anthropic dashboard
-- Ensure you're using a valid Claude model name
+**AI Provider Errors**
+- Verify your provider is set: `echo $PROVIDER_ID`
+- Verify API key for your provider:
+  - Anthropic: `echo $ANTHROPIC_API_KEY | head -c 10`
+  - OpenAI: `echo $OPENAI_API_KEY | head -c 10`
+- Check rate limits in your provider's dashboard
+- Try free models: `PROVIDER_ID=opencode` (no API key needed)
+- Ensure OpenCode CLI is installed: `opencode --version`
 
 **Test Failures**
 ```bash
