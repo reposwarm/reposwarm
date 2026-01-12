@@ -27,9 +27,26 @@ class Config:
         "github-copilot",
     ]
 
-    # Default model settings
-    DEFAULT_MODEL = "claude-opus-4-5-20251101"
+    # Default model settings (configurable via environment)
+    # If not set, uses provider-specific defaults
+    MODEL_ID = os.getenv("MODEL_ID", "")  # e.g., "claude-opus-4-5-20251101", "gpt-4o", "gpt-5-nano"
     MAX_TOKENS = 6000
+
+    # Provider-specific default models (used when MODEL_ID is not set)
+    DEFAULT_MODELS = {
+        "opencode": "gpt-5-nano",
+        "anthropic": "claude-opus-4-5-20251101",
+        "openai": "gpt-4o",
+        "google": "gemini-2.0-flash",
+        "groq": "llama-3.3-70b-versatile",
+    }
+
+    @staticmethod
+    def get_default_model(provider_id: str) -> str:
+        """Get the default model for a provider."""
+        if Config.MODEL_ID:
+            return Config.MODEL_ID
+        return Config.DEFAULT_MODELS.get(provider_id, "claude-opus-4-5-20251101")
 
     # Valid model names per provider
     # Models are specified in format: provider/model-name

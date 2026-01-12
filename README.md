@@ -147,6 +147,9 @@ RepoSwarm supports multiple AI providers through [OpenCode](https://github.com/s
 # Choose your provider
 PROVIDER_ID=anthropic  # Options: opencode, anthropic, openai, google, groq
 
+# Optional: Override the default model for your provider
+MODEL_ID=claude-opus-4-5-20251101
+
 # Set the appropriate API key for your provider
 ANTHROPIC_API_KEY=sk-ant-...
 # or
@@ -158,7 +161,7 @@ OPENAI_API_KEY=sk-...
 
 ```bash
 PROVIDER_ID=opencode
-# That's it! Uses gpt-5-nano by default
+MODEL_ID=gpt-5-nano  # or: glm-4.7-free, minimax-m2.1-free
 ```
 
 ### Adding Repositories

@@ -103,14 +103,10 @@ class OpenCodeAnalyzer:
         # Get config values
         provider_id = config_overrides.get("provider_id") or self.provider_id
 
-        # Get model_id - use provider-specific default if using opencode provider
+        # Get model_id - use config overrides, then env var, then provider-specific default
         model_id = config_overrides.get("model_id") or config_overrides.get("claude_model")
         if not model_id:
-            if provider_id == "opencode":
-                # Use free model for opencode provider
-                model_id = "gpt-5-nano"
-            else:
-                model_id = Config.DEFAULT_MODEL
+            model_id = Config.get_default_model(provider_id)
 
         # Format model as provider/model
         full_model = f"{provider_id}/{model_id}"
