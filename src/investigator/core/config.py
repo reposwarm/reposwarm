@@ -24,6 +24,7 @@ class Config:
         "azure",
         "ollama",
         "groq",
+        "cerebras",
         "github-copilot",
     ]
 
@@ -39,6 +40,7 @@ class Config:
         "openai": "gpt-4o",
         "google": "gemini-2.0-flash",
         "groq": "llama-3.3-70b-versatile",
+        "cerebras": "zai-glm-4.7",
     }
 
     @staticmethod

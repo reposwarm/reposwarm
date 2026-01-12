@@ -115,11 +115,10 @@ class OpenCodeAnalyzer:
         self.logger.debug(f"Using model: {full_model}")
 
         try:
-            # Use opencode CLI with --attach to connect to the running server
+            # Use opencode CLI directly (not --attach mode for better provider compatibility)
             # Pass the prompt directly as the message argument
             cmd = [
                 "opencode", "run",
-                "--attach", self.base_url,
                 "--model", full_model,
                 "--format", "json",
                 prompt  # The prompt is passed as the message
