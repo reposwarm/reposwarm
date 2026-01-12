@@ -1,5 +1,8 @@
 """
-Main Claude Investigator module for repository analysis.
+Main OpenCode Investigator module for repository analysis.
+
+This module uses the OpenCode SDK to analyze repository structure with
+support for multiple AI providers (Anthropic, OpenAI, Google, etc.).
 """
 
 import os
@@ -15,10 +18,11 @@ try:
         Utils,
         GitRepositoryManager,
         RepositoryAnalyzer,
-        ClaudeAnalyzer,
         FileManager,
         RepositoryTypeDetector
     )
+    from .core.opencode_analyzer import OpenCodeAnalyzer
+    from .core.opencode_server import OpenCodeServerManager
     from .activity_wrapper import ActivityWrapper
 except ImportError:
     # Fall back to absolute import (when run directly)
@@ -27,51 +31,65 @@ except ImportError:
         Utils,
         GitRepositoryManager,
         RepositoryAnalyzer,
-        ClaudeAnalyzer,
         FileManager,
         RepositoryTypeDetector
     )
+    from core.opencode_analyzer import OpenCodeAnalyzer
+    from core.opencode_server import OpenCodeServerManager
     from activity_wrapper import ActivityWrapper
 
 
-class ClaudeInvestigator:
+class OpenCodeInvestigator:
     """
-    A repository investigator that uses Claude Code SDK to analyze repository structure.
+    A repository investigator that uses the OpenCode SDK to analyze repository structure.
+    Supports multiple AI providers (Anthropic, OpenAI, Google, etc.).
     """
-    
-    def __init__(self, api_key: Optional[str] = None, log_level: str = "INFO", 
+
+    def __init__(self, provider_id: Optional[str] = None, log_level: str = "INFO",
                  workflow_context: Optional[Any] = None):
         """
-        Initialize the Claude investigator.
-        
+        Initialize the OpenCode investigator.
+
         Args:
-            api_key: Claude API key. If not provided, will try to get from environment variable ANTHROPIC_API_KEY
+            provider_id: AI provider ID (e.g., "anthropic", "openai", "google").
+                        If not provided, will use PROVIDER_ID env var or default to "anthropic"
             log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
             workflow_context: Optional Temporal workflow context for activity execution
         """
         self._setup_logging(log_level)
         self.logger = logging.getLogger(__name__)
-        
-        self.api_key = api_key or os.getenv('ANTHROPIC_API_KEY')
-        if not self.api_key:
-            self.logger.error("Claude API key is required")
-            raise ValueError("Claude API key is required. Set ANTHROPIC_API_KEY environment variable or pass api_key parameter.")
-        
-        self.logger.info("Initializing Claude Investigator")
-        
+
+        # Get provider configuration
+        self.provider_id = provider_id or Config.PROVIDER_ID
+
+        self.logger.info(f"Initializing OpenCode Investigator (provider: {self.provider_id})")
+
+        # Initialize OpenCode server manager (spawns server on-demand)
+        self.server_manager = OpenCodeServerManager(port=Config.OPENCODE_PORT, logger=self.logger)
+
         # Initialize components
         self.git_manager = GitRepositoryManager(self.logger)
         self.repo_analyzer = RepositoryAnalyzer(self.logger)
-        self.claude_analyzer = ClaudeAnalyzer(self.api_key, self.logger)
         self.file_manager = FileManager(self.logger)
         self.type_detector = RepositoryTypeDetector(self.logger)
-        
+
+        # OpenCode analyzer will be initialized lazily when server is started
+        self._opencode_analyzer = None
+
         # Initialize ActivityWrapper for Temporal activity execution
         self.activity_wrapper = ActivityWrapper(workflow_context)
-        
+
         self.temp_dir = None
-        self.logger.debug("Claude Investigator initialized successfully")
-    
+        self.logger.debug("OpenCode Investigator initialized successfully")
+
+    @property
+    def opencode_analyzer(self) -> OpenCodeAnalyzer:
+        """Lazily initialize the OpenCode analyzer when first needed."""
+        if self._opencode_analyzer is None:
+            base_url = self.server_manager.start()
+            self._opencode_analyzer = OpenCodeAnalyzer(base_url, self.provider_id, self.logger)
+        return self._opencode_analyzer
+
     def _setup_logging(self, log_level: str):
         """Set up logging configuration."""
         level = getattr(logging, log_level.upper(), logging.INFO)
@@ -278,7 +296,7 @@ class ClaudeInvestigator:
     def _build_exact_prompt(self, prompt_template: str, repo_structure: str, previous_context: str) -> str:
         """
         Build the exact prompt that will be sent to Claude.
-        This replicates the logic from ClaudeAnalyzer.analyze_with_context()
+        This replicates the logic from OpenCodeAnalyzer.analyze_with_context()
         
         Args:
             prompt_template: The prompt template with placeholders
@@ -374,9 +392,9 @@ class ClaudeInvestigator:
                 )
             else:
                 # Fallback to direct execution when not in Temporal context
-                result = self.claude_analyzer.analyze_with_context(
-                    prompt_content, 
-                    repo_structure, 
+                result = self.opencode_analyzer.analyze_with_context(
+                    prompt_content,
+                    repo_structure,
                     context_to_use
                 )
             
@@ -494,38 +512,45 @@ class ClaudeInvestigator:
         self.logger.info(f"Repository size: {repo_size}")
         
         return repo_path
-    
-async def investigate_repo(repo_location: str, api_key: Optional[str] = None, log_level: str = "INFO", repo_type: Optional[str] = None) -> str:
+
+
+# Backwards compatibility alias
+ClaudeInvestigator = OpenCodeInvestigator
+
+
+async def investigate_repo(repo_location: str, provider_id: Optional[str] = None, log_level: str = "INFO", repo_type: Optional[str] = None) -> str:
     """
     Convenience function to investigate a repository.
-    
+
     Args:
         repo_location: URL or path to the repository to investigate
-        api_key: Claude API key (optional, will use environment variable if not provided)
+        provider_id: AI provider ID (optional, defaults to Config.PROVIDER_ID)
         log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
         repo_type: Optional repository type override ('generic', 'backend', 'frontend', 'mobile', 'infra-as-code', 'libraries')
-        
-            Returns:
-            Path to the generated {repository-name}-arch.md file
+
+    Returns:
+        Path to the generated {repository-name}-arch.md file
     """
-    investigator = ClaudeInvestigator(api_key=api_key, log_level=log_level)
+    investigator = OpenCodeInvestigator(provider_id=provider_id, log_level=log_level)
     return await investigator.investigate_repository(repo_location, repo_type=repo_type)
 
 
 if __name__ == "__main__":
     import sys
-    
+    import asyncio
+
     if len(sys.argv) < 2:
-        print("Usage: python investigator.py <repository_location> [api_key] [log_level]")
+        print("Usage: python investigator.py <repository_location> [provider_id] [log_level]")
+        print("Provider IDs: anthropic (default), openai, google, bedrock, etc.")
         print("Log levels: DEBUG, INFO, WARNING, ERROR (default: INFO)")
         sys.exit(1)
-    
+
     repo_location = sys.argv[1]
-    api_key = sys.argv[2] if len(sys.argv) > 2 else None
+    provider_id = sys.argv[2] if len(sys.argv) > 2 else None
     log_level = sys.argv[3] if len(sys.argv) > 3 else "INFO"
-    
+
     try:
-        arch_file_path = investigate_repo(repo_location, api_key, log_level)
+        arch_file_path = asyncio.run(investigate_repo(repo_location, provider_id, log_level))
         print(f"Investigation complete! Analysis saved to: {arch_file_path}")
     except Exception as e:
         print(f"Error: {str(e)}")

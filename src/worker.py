@@ -23,13 +23,20 @@ def validate_environment():
         errors.append(f"Cannot import Config: {e}")
         return errors, warnings
 
-    # Validate Claude configuration
+    # Validate OpenCode/Provider configuration
     try:
-        claude_model = os.getenv('CLAUDE_MODEL', Config.CLAUDE_MODEL)
-        Config.validate_claude_model(claude_model)
-        logger.info(f"  ✓ Claude model: {claude_model}")
+        provider_id = os.getenv('PROVIDER_ID', Config.PROVIDER_ID)
+        Config.validate_provider(provider_id)
+        logger.info(f"  ✓ Provider: {provider_id}")
     except ValueError as e:
-        errors.append(f"Invalid Claude model: {e}")
+        errors.append(f"Invalid provider: {e}")
+
+    try:
+        model = os.getenv('DEFAULT_MODEL', Config.DEFAULT_MODEL)
+        Config.validate_model(model, provider_id)
+        logger.info(f"  ✓ Model: {model}")
+    except ValueError as e:
+        errors.append(f"Invalid model: {e}")
 
     try:
         max_tokens = int(os.getenv('MAX_TOKENS', Config.MAX_TOKENS))
@@ -38,11 +45,29 @@ def validate_environment():
     except ValueError as e:
         errors.append(f"Invalid max tokens: {e}")
 
-    # Required API keys
-    if not os.getenv('ANTHROPIC_API_KEY'):
-        errors.append("ANTHROPIC_API_KEY environment variable is required for Claude API access")
+    # OpenCode server port
+    opencode_port = os.getenv('OPENCODE_PORT', str(Config.OPENCODE_PORT))
+    logger.info(f"  ✓ OpenCode port: {opencode_port}")
+
+    # Provider API keys (depends on selected provider)
+    provider_id = os.getenv('PROVIDER_ID', Config.PROVIDER_ID)
+    if provider_id == 'anthropic':
+        if not os.getenv('ANTHROPIC_API_KEY'):
+            errors.append("ANTHROPIC_API_KEY environment variable is required for Anthropic provider")
+        else:
+            logger.info("  ✓ Anthropic API key present")
+    elif provider_id == 'openai':
+        if not os.getenv('OPENAI_API_KEY'):
+            errors.append("OPENAI_API_KEY environment variable is required for OpenAI provider")
+        else:
+            logger.info("  ✓ OpenAI API key present")
+    elif provider_id == 'google':
+        if not os.getenv('GOOGLE_API_KEY'):
+            errors.append("GOOGLE_API_KEY environment variable is required for Google provider")
+        else:
+            logger.info("  ✓ Google API key present")
     else:
-        logger.info("  ✓ Anthropic API key present")
+        logger.info(f"  ⚠ Provider '{provider_id}' - ensure appropriate API key is configured")
 
     if not os.getenv('GITHUB_TOKEN'):
         errors.append("GITHUB_TOKEN environment variable is required for GitHub API access")
@@ -179,13 +204,22 @@ async def main():
     Validate environment and delegate to the investigate worker main entrypoint.
 
     Required environment variables:
-    - ANTHROPIC_API_KEY: Your Anthropic API key for Claude access
     - GITHUB_TOKEN: GitHub personal access token for repository access
     - AWS_ACCESS_KEY_ID: AWS access key for DynamoDB
     - AWS_SECRET_ACCESS_KEY: AWS secret key for DynamoDB
     - AWS_DEFAULT_REGION: AWS region (e.g., us-east-1, eu-west-1)
 
+    Provider-specific API keys (required based on PROVIDER_ID):
+    - ANTHROPIC_API_KEY: Required when PROVIDER_ID=anthropic (default)
+    - OPENAI_API_KEY: Required when PROVIDER_ID=openai
+    - GOOGLE_API_KEY: Required when PROVIDER_ID=google
+
     Optional environment variables:
+    - PROVIDER_ID: AI provider to use (default: anthropic)
+      Options: anthropic, openai, google, bedrock, azure, ollama
+    - DEFAULT_MODEL: Model to use (default: claude-opus-4-5-20251101)
+    - MAX_TOKENS: Maximum tokens per request (default: 6000)
+    - OPENCODE_PORT: Port for OpenCode server (default: 4096)
     - TEMPORAL_SERVER_URL: Temporal server URL (default: localhost:7233)
     - TEMPORAL_NAMESPACE: Temporal namespace (default: default)
     - TEMPORAL_TASK_QUEUE: Task queue name (default: investigate-task-queue)
@@ -193,8 +227,6 @@ async def main():
     - TEMPORAL_API_KEY: Temporal Cloud API key (optional, for cloud deployment)
     - PROMPT_CONTEXT_STORAGE: Storage backend (default: auto)
     - DYNAMODB_TABLE_NAME: DynamoDB table name (recommended for production)
-    - CLAUDE_MODEL: Claude model to use (default: claude-sonnet-4-20250514)
-    - MAX_TOKENS: Maximum tokens per request (default: 6000)
     """
     # Validate environment before starting
     errors, warnings = validate_environment()
@@ -216,8 +248,8 @@ async def main():
         print("Please ensure all required packages are installed:", flush=True)
         print("  - temporalio", flush=True)
         print("  - boto3", flush=True)
-        print("  - anthropic", flush=True)
-        print("Run 'pip install -r requirements.txt' or use your package manager", flush=True)
+        print("  - opencode-ai", flush=True)
+        print("Run 'pip install -e .' or use your package manager", flush=True)
         print("=" * 60, flush=True)
         sys.exit(1)
 

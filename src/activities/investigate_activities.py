@@ -491,12 +491,15 @@ async def cleanup_temporary_analysis_data_activity(reference_key: str) -> dict:
 @activity.defn
 async def analyze_with_claude_context(input_params: AnalyzeWithClaudeInput) -> AnalyzeWithClaudeOutput:
     """
-    Activity to analyze repository content using Claude API with PromptContext.
+    Activity to analyze repository content using OpenCode API with PromptContext.
     Includes prompt-level caching to avoid re-running the same analysis for unchanged commits.
-    
+
+    This activity spawns an OpenCode server on-demand if not already running,
+    creates a session for the analysis, and cleans up the session afterward.
+
     Args:
         input_params: AnalyzeWithClaudeInput containing context_dict, config_overrides, and latest_commit
-        
+
     Returns:
         AnalyzeWithClaudeOutput with status, updated context, result length, and cache info
     """
@@ -508,13 +511,14 @@ async def analyze_with_claude_context(input_params: AnalyzeWithClaudeInput) -> A
     repo_name = context_dict.get('repo_name')
     step_name = context_dict.get('step_name')
     
-    activity.logger.info(f"Starting Claude analysis for step: {step_name}")
+    activity.logger.info(f"Starting OpenCode analysis for step: {step_name}")
     
     try:
         # Import here to avoid workflow sandbox issues
         sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         from utils.prompt_context import create_prompt_context_from_dict
-        from investigator.core.claude_analyzer import ClaudeAnalyzer
+        from investigator.core.opencode_analyzer import OpenCodeAnalyzer
+        from investigator.core.opencode_server import OpenCodeServerManager
         from investigator.core.config import Config
         from utils.dynamodb_client import get_dynamodb_client
         from activities.investigation_cache import InvestigationCache
@@ -605,28 +609,32 @@ async def analyze_with_claude_context(input_params: AnalyzeWithClaudeInput) -> A
         if not prompt_content or not repo_structure:
             raise Exception(f"Invalid data: missing prompt_content or repo_structure")
         
-        activity.logger.info(f"Successfully prepared data for Claude analysis")
-        
-        # Create a logger for the ClaudeAnalyzer
+        activity.logger.info(f"Successfully prepared data for OpenCode analysis")
+
+        # Create a logger for the OpenCodeAnalyzer
         logger = logging.getLogger(__name__)
-        
-        # Initialize Claude analyzer
-        api_key = os.getenv('ANTHROPIC_API_KEY')
-        if not api_key:
-            raise Exception("Claude API key not configured. Set ANTHROPIC_API_KEY environment variable.")
-            
-        claude_analyzer = ClaudeAnalyzer(api_key, logger)
-        
+
+        # Start OpenCode server on-demand
+        server_manager = OpenCodeServerManager(port=Config.OPENCODE_PORT, logger=logger)
+        base_url = server_manager.start()
+
+        # Get provider from config
+        provider_id = config_overrides.get("provider_id") if config_overrides else None
+        provider_id = provider_id or Config.PROVIDER_ID
+
+        # Initialize OpenCode analyzer
+        opencode_analyzer = OpenCodeAnalyzer(base_url, provider_id, logger)
+
         # Perform the analysis
-        activity.logger.info("Calling Claude API for analysis")
-        result = claude_analyzer.analyze_with_context(
-            prompt_content, 
-            repo_structure, 
+        activity.logger.info(f"Calling OpenCode API for analysis (provider: {provider_id})")
+        result = opencode_analyzer.analyze_with_context(
+            prompt_content,
+            repo_structure,
             context_to_use,
             config_overrides=config_overrides
         )
         
-        activity.logger.info(f"Claude analysis completed successfully ({len(result)} characters)")
+        activity.logger.info(f"OpenCode analysis completed successfully ({len(result)} characters)")
         
         # Save the result as a cache entry (this is the ONLY save we need)
         result_key = None
@@ -689,8 +697,8 @@ async def analyze_with_claude_context(input_params: AnalyzeWithClaudeInput) -> A
         )
         
     except Exception as e:
-        activity.logger.error(f"Claude analysis failed: {str(e)}")
-        raise Exception(f"Failed to analyze with Claude: {str(e)}") from e
+        activity.logger.error(f"OpenCode analysis failed: {str(e)}")
+        raise Exception(f"Failed to analyze with OpenCode: {str(e)}") from e
 
 
 @activity.defn
