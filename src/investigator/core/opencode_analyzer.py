@@ -42,18 +42,18 @@ class OpenCodeAnalyzer:
         if not prompt_template:
             return prompt_template
 
-        lines = prompt_template.split('\n')
+        lines = prompt_template.split("\n")
 
         # Only clean if version line exists at the beginning
-        if lines and lines[0].startswith('version'):
+        if lines and lines[0].startswith("version"):
             lines = lines[1:]
             self.logger.debug("Removed version line from prompt")
 
             # Remove any leading empty lines after version removal
-            while lines and lines[0].strip() == '':
+            while lines and lines[0].strip() == "":
                 lines = lines[1:]
 
-            cleaned_prompt = '\n'.join(lines)
+            cleaned_prompt = "\n".join(lines)
             self.logger.debug(f"Cleaned prompt ({len(cleaned_prompt)} characters)")
 
             return cleaned_prompt
@@ -66,7 +66,7 @@ class OpenCodeAnalyzer:
         prompt_template: str,
         repo_structure: str,
         previous_context: Optional[str] = None,
-        config_overrides: Optional[dict] = None
+        config_overrides: Optional[dict] = None,
     ) -> str:
         """
         Analyze using OpenCode with optional context from previous analyses.
@@ -91,7 +91,9 @@ class OpenCodeAnalyzer:
 
         # Add previous context if available
         if previous_context:
-            context_section = f"\n\n## Previous Analysis Context\n\n{previous_context}\n\n"
+            context_section = (
+                f"\n\n## Previous Analysis Context\n\n{previous_context}\n\n"
+            )
             prompt = prompt.replace("{previous_context}", context_section)
         else:
             # Remove the placeholder if no context
@@ -104,7 +106,9 @@ class OpenCodeAnalyzer:
         provider_id = config_overrides.get("provider_id") or self.provider_id
 
         # Get model_id - use config overrides, then env var, then provider-specific default
-        model_id = config_overrides.get("model_id") or config_overrides.get("claude_model")
+        model_id = config_overrides.get("model_id") or config_overrides.get(
+            "claude_model"
+        )
         if not model_id:
             model_id = Config.get_default_model(provider_id)
 
@@ -115,33 +119,49 @@ class OpenCodeAnalyzer:
         self.logger.debug(f"Using model: {full_model}")
 
         try:
-            # Use opencode CLI directly (not --attach mode for better provider compatibility)
-            # Pass the prompt directly as the message argument
+            # Use opencode CLI with prompt via stdin (handles long prompts better)
             cmd = [
-                "opencode", "run",
-                "--model", full_model,
-                "--format", "json",
-                prompt  # The prompt is passed as the message
+                "opencode",
+                "run",
+                "--model",
+                full_model,
+                "--format",
+                "json",
             ]
 
-            self.logger.debug(f"Running opencode command with {len(prompt)} char prompt")
-
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=600  # 10 minute timeout
+            self.logger.debug(
+                f"Running opencode command with {len(prompt)} char prompt via stdin"
             )
 
+            # Pass prompt via stdin to avoid command-line length limits
+            result = subprocess.run(
+                cmd,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=600,  # 10 minute timeout
+            )
+
+            self.logger.debug(f"OpenCode returncode: {result.returncode}")
+            self.logger.debug(f"OpenCode stdout length: {len(result.stdout)}")
+            if result.stderr:
+                self.logger.debug(f"OpenCode stderr: {result.stderr[:500]}")
+
             if result.returncode != 0:
-                self.logger.error(f"OpenCode CLI failed: {result.stderr}")
+                self.logger.error(
+                    f"OpenCode CLI failed (code {result.returncode}): {result.stderr}"
+                )
                 raise Exception(f"OpenCode CLI failed: {result.stderr}")
 
             # Parse JSON output to extract text
             analysis_text = self._extract_text_from_json_output(result.stdout)
 
-            self.logger.info(f"Received analysis from OpenCode ({len(analysis_text)} characters)")
-            self.logger.debug(f"Analysis preview (first 1000 chars): {analysis_text[:1000]}...")
+            self.logger.info(
+                f"Received analysis from OpenCode ({len(analysis_text)} characters)"
+            )
+            self.logger.debug(
+                f"Analysis preview (first 1000 chars): {analysis_text[:1000]}..."
+            )
 
             return analysis_text
 
@@ -165,31 +185,48 @@ class OpenCodeAnalyzer:
         """
         text_parts = []
 
+        self.logger.debug(f"Raw output length: {len(output)} chars")
+        if not output.strip():
+            self.logger.warning("Empty output from OpenCode")
+            return ""
+
         # Parse each line as a separate JSON object
-        for line in output.strip().split('\n'):
+        for line in output.strip().split("\n"):
             if not line.strip():
                 continue
 
             try:
                 event = json.loads(line)
+                event_type = event.get("type", "unknown")
 
                 # Extract text from "text" type events
-                if event.get("type") == "text":
+                if event_type == "text":
                     part = event.get("part", {})
-                    if part.get("text"):
-                        text_parts.append(part["text"])
+                    text_content = part.get("text", "")
+                    if text_content:
+                        text_parts.append(text_content)
+                        self.logger.debug(
+                            f"Extracted text chunk: {len(text_content)} chars"
+                        )
 
                 # Check for errors
-                if event.get("type") == "error":
+                if event_type == "error":
                     error_data = event.get("error", {})
-                    error_msg = error_data.get("data", {}).get("message", str(error_data))
+                    error_msg = error_data.get("data", {}).get(
+                        "message", str(error_data)
+                    )
+                    self.logger.error(f"OpenCode error event: {error_msg}")
                     raise Exception(f"OpenCode error: {error_msg}")
 
-            except json.JSONDecodeError:
-                # Skip non-JSON lines
+            except json.JSONDecodeError as e:
+                self.logger.debug(f"Skipping non-JSON line: {line[:100]}...")
                 continue
 
-        return "".join(text_parts)
+        result = "".join(text_parts)
+        self.logger.debug(
+            f"Total extracted text: {len(result)} chars from {len(text_parts)} parts"
+        )
+        return result
 
     def analyze_structure(self, repo_structure: str, prompt_template: str) -> str:
         """

@@ -30,17 +30,18 @@ uv sync
 
 # Start Temporal server in background
 echo "Starting Temporal server..."
-mise run dev-server &
+temporal server start-dev &> /dev/null &
 SERVER_PID=$!
 sleep 5
 
-# Check if API key is set
-if [ -z "$ANTHROPIC_API_KEY" ]; then
+# Check if API key is set (skip for opencode provider which doesn't need one)
+if [ "$PROVIDER_ID" != "opencode" ] && [ "$PROVIDER_ID" != "cerebras" ] && [ -z "$ANTHROPIC_API_KEY" ]; then
     echo "❌ Error: ANTHROPIC_API_KEY environment variable is not set"
-    echo "Please set your Claude API key:"
-    echo "export ANTHROPIC_API_KEY='your-api-key-here'"
+    echo "Please set your API key or use PROVIDER_ID=opencode for free models"
     exit 1
 fi
+# Set dummy key to satisfy any legacy checks
+export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-opencode-provider}"
 
 # Default repository if not specified
 DEFAULT_REPO="is-odd"
@@ -175,12 +176,12 @@ done
 
 # Start the worker in background
 echo "Starting Temporal worker..."
-cd src && python -m investigate_worker &
+cd src && uv run python -m investigate_worker &
 WORKER_PID=$!
 sleep 3
 
 # Prepare the command
-CMD="cd src && python -m client investigate-single \"$REPO_ARG\" $FORCE_FLAG $FORCE_SECTION $CLAUDE_MODEL $MAX_TOKENS $REPO_TYPE"
+CMD="cd src && uv run python -m client investigate-single \"$REPO_ARG\" $FORCE_FLAG $FORCE_SECTION $CLAUDE_MODEL $MAX_TOKENS $REPO_TYPE"
 
 if [ "$DRY_RUN" = true ]; then
     echo ""

@@ -40,7 +40,7 @@ class Config:
         "openai": "gpt-4o",
         "google": "gemini-2.0-flash",
         "groq": "llama-3.3-70b-versatile",
-        "cerebras": "zai-glm-4.7",
+        "cerebras": "gpt-oss-120b",  # GPT OSS 120B - fast inference
     }
 
     @staticmethod
@@ -84,6 +84,11 @@ class Config:
         "groq": [
             "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
+        ],
+        "cerebras": [
+            "gpt-oss-120b", # GPT OSS 120B
+            "qwen",         # Qwen 3 235B Instruct
+            "glm-4.6",      # Z.AI GLM-4.6
         ],
     }
     

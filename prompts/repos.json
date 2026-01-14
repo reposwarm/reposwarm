@@ -1,120 +1,16 @@
 {
-  "default": "https://github.com/ascpixi/is-odd",
-  "_comment": "Available types: generic, backend, frontend, mobile, infra-as-code, libraries",
-  "repositories": {
-    "repo-swarm": {
-      "url": "https://github.com/royosherove/repo-swarm",
-      "description": "AI-powered multi-repo architecture discovery platform",
-      "type": "backend"
-    },
-    "_comment_react": "=== React Ecosystem (core + state + routing) ===",
-    "react": {
-      "url": "https://github.com/facebook/react",
-      "description": "React core library - the foundation of the React ecosystem",
-      "type": "frontend"
-    },
-    "react-router": {
-      "url": "https://github.com/remix-run/react-router",
-      "description": "Declarative routing for React (depends on React)",
-      "type": "frontend"
-    },
-    "redux-toolkit": {
-      "url": "https://github.com/reduxjs/redux-toolkit",
-      "description": "Official Redux toolset (commonly used with React)",
-      "type": "libraries"
-    },
-    "zustand": {
-      "url": "https://github.com/pmndrs/zustand",
-      "description": "Lightweight state management for React (alternative to Redux)",
-      "type": "libraries"
-    },
-    "_comment_vue": "=== Vue Ecosystem (core + state) ===",
-    "vue": {
-      "url": "https://github.com/vuejs/core",
-      "description": "Vue.js 3 core - progressive JavaScript framework",
-      "type": "frontend"
-    },
-    "pinia": {
-      "url": "https://github.com/vuejs/pinia",
-      "description": "Vue state management (depends on Vue, official replacement for Vuex)",
-      "type": "libraries"
-    },
-    "_comment_nextjs": "=== Next.js / Vercel Ecosystem ===",
-    "nextjs": {
-      "url": "https://github.com/vercel/next.js",
-      "description": "React full-stack framework (depends on React)",
-      "type": "frontend"
-    },
-    "swr": {
-      "url": "https://github.com/vercel/swr",
-      "description": "React data fetching library (commonly used with Next.js)",
-      "type": "libraries"
-    },
-    "ai": {
-      "url": "https://github.com/vercel/ai",
-      "description": "Vercel AI SDK for building AI-powered apps (integrates with Next.js)",
-      "type": "libraries"
-    },
-    "_comment_build": "=== Build Tools (interdependent bundlers) ===",
-    "vite": {
-      "url": "https://github.com/vitejs/vite",
-      "description": "Next-gen frontend build tool (uses esbuild and Rollup internally)",
-      "type": "libraries"
-    },
-    "rollup": {
-      "url": "https://github.com/rollup/rollup",
-      "description": "ES module bundler (Vite uses this for production builds)",
-      "type": "libraries"
-    },
-    "_comment_backend": "=== Node.js Backend Frameworks ===",
-    "express": {
-      "url": "https://github.com/expressjs/express",
-      "description": "Classic Node.js web framework - industry standard",
-      "type": "backend"
-    },
-    "fastify": {
-      "url": "https://github.com/fastify/fastify",
-      "description": "Modern high-performance Node.js web framework",
-      "type": "backend"
-    },
-    "trpc": {
-      "url": "https://github.com/trpc/trpc",
-      "description": "End-to-end typesafe APIs (commonly used with Next.js + Prisma)",
-      "type": "backend"
-    },
-    "_comment_orm": "=== Database / ORM ===",
-    "prisma": {
-      "url": "https://github.com/prisma/prisma",
-      "description": "Type-safe database toolkit and ORM for Node.js",
-      "type": "backend"
-    },
-    "drizzle-orm": {
-      "url": "https://github.com/drizzle-team/drizzle-orm",
-      "description": "TypeScript ORM (alternative to Prisma, lighter weight)",
-      "type": "backend"
-    },
-    "_comment_testing": "=== Testing Frameworks ===",
-    "jest": {
-      "url": "https://github.com/jestjs/jest",
-      "description": "JavaScript testing framework by Meta",
-      "type": "libraries"
-    },
-    "vitest": {
-      "url": "https://github.com/vitest-dev/vitest",
-      "description": "Vite-native testing framework (mirrors Jest API, integrates with Vite)",
-      "type": "libraries"
-    },
-    "_comment_mobile": "=== Mobile ===",
-    "expo": {
-      "url": "https://github.com/expo/expo",
-      "description": "React Native framework and platform (depends on React)",
-      "type": "mobile"
-    },
-    "_comment_ai": "=== AI/ML ===",
-    "langchainjs": {
-      "url": "https://github.com/langchain-ai/langchainjs",
-      "description": "LangChain for JavaScript - LLM application framework",
-      "type": "libraries"
+    "default": "https://github.com/falfaddaghi/FTS-API",
+    "_comment": "Available types: generic, backend, frontend, mobile, infra-as-code, libraries",
+    "repositories": {
+        "talents": {
+            "url": "https://github.com/FoothillSolutions/talents",
+            "description": "internal evaluation system for foothill",
+            "type": "frontend"
+        },
+        "fts-api": {
+            "url": "https://github.com/falfaddaghi/FTS-API",
+            "description": "internal api for fts systems",
+            "type": "backend"
+        }
     }
-  }
 }
