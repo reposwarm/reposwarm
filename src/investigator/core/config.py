@@ -120,6 +120,34 @@ class Config:
     # DEFAULT_ORG_NAME supports both GitHub organizations and individual user accounts
     DEFAULT_ORG_NAME = os.getenv("DEFAULT_ORG_NAME", "your-org")
     DEFAULT_REPO_URL = os.getenv("DEFAULT_REPO_URL", "https://github.com/facebook/react")
+
+    # Git Provider Configuration
+    # Supported providers: "github", "gitlab"
+    GIT_PROVIDER = os.getenv("GIT_PROVIDER", "github")
+    VALID_GIT_PROVIDERS = ["github", "gitlab"]
+
+    # GitLab Configuration (for GitLab support)
+    GITLAB_TOKEN = os.getenv("GITLAB_TOKEN", "")
+    GITLAB_BASE_URL = os.getenv("GITLAB_BASE_URL", "https://gitlab.com")
+
+    @staticmethod
+    def validate_git_provider(provider: str) -> str:
+        """Validate git provider configuration."""
+        provider = provider.lower()
+        if provider not in Config.VALID_GIT_PROVIDERS:
+            raise ValueError(
+                f"Invalid GIT_PROVIDER '{provider}'. "
+                f"Valid providers: {Config.VALID_GIT_PROVIDERS}"
+            )
+        return provider
+
+    @staticmethod
+    def get_git_token(provider: str = None) -> str:
+        """Get the appropriate token for the configured provider."""
+        provider = provider or Config.GIT_PROVIDER
+        if provider == "gitlab":
+            return Config.GITLAB_TOKEN or os.getenv("GITLAB_TOKEN", "")
+        return os.getenv("GITHUB_TOKEN", "")
     
     # Git configuration for commits
     GIT_USER_NAME = os.getenv("GIT_USER_NAME", "Architecture Bot")

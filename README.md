@@ -15,8 +15,8 @@ RepoSwarm was born out of a hackathon we ran at Verbit, in which our team, compr
 
 RepoSwarm is an intelligent agentic-like engine that:
 
-- 🔍 Analyzes GitHub repositories using OpenCode (multi-provider AI support)
-- 📝 Generates standardized `.arch.md` architecture files  
+- 🔍 Analyzes **GitHub and GitLab** repositories using OpenCode (multi-provider AI support)
+- 📝 Generates standardized `.arch.md` architecture files
 - 🔄 Runs daily via Temporal workflows on repos with new commits
 - 💾 Caches results to avoid redundant analysis
 - Writes the results into a results repository that you configure
@@ -164,6 +164,47 @@ PROVIDER_ID=opencode
 MODEL_ID=gpt-5-nano  # or: glm-4.7-free, minimax-m2.1-free
 ```
 
+### Git Provider Setup
+
+RepoSwarm supports both **GitHub** and **GitLab** repositories:
+
+| Provider | Environment Variables | Features |
+|----------|----------------------|----------|
+| **GitHub** (default) | `GITHUB_TOKEN` | Organizations, user accounts, GitHub Enterprise |
+| **GitLab** | `GITLAB_TOKEN`, `GITLAB_BASE_URL` | Groups, users, self-hosted instances |
+
+**GitHub Configuration** (default):
+
+```bash
+# GitHub is the default provider
+GIT_PROVIDER=github
+GITHUB_TOKEN=ghp_xxxxxxxxxxxx
+```
+
+**GitLab Configuration**:
+
+```bash
+# Switch to GitLab
+GIT_PROVIDER=gitlab
+GITLAB_TOKEN=glpat-xxxxxxxxxxxx
+GITLAB_BASE_URL=https://gitlab.com  # or your self-hosted URL
+```
+
+**Self-hosted GitLab**:
+
+```bash
+GIT_PROVIDER=gitlab
+GITLAB_TOKEN=glpat-xxxxxxxxxxxx
+GITLAB_BASE_URL=https://gitlab.mycompany.com
+DEFAULT_ORG_NAME=your-gitlab-group
+```
+
+The system automatically:
+- Detects the provider from repository URLs
+- Uses the correct authentication format (GitHub token vs GitLab `PRIVATE-TOKEN`)
+- Handles GitLab's nested group structure
+- Supports self-hosted GitLab instances
+
 ### Adding Repositories
 
 Edit `prompts/repos.json` to add repositories for analysis:
@@ -280,6 +321,7 @@ repo-swarm/
 ├── src/
 │   ├── investigator/       # Core analysis engine
 │   │   ├── core/          # Main analysis logic
+│   │   │   └── providers/ # Git provider abstraction (GitHub, GitLab)
 │   │   └── investigator.py # Main investigator class
 │   │
 │   ├── workflows/          # Temporal workflow definitions

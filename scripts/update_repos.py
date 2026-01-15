@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-Fetch all repositories from the configured GitHub organization
+Fetch all repositories from the configured GitHub/GitLab organization
 and update repos.json with their information while preserving existing entries.
 Only includes non-archived repositories with commits in the past 1 year.
+
+Supports both GitHub and GitLab via provider abstraction.
 """
 
 import json
@@ -13,9 +15,10 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import time
 
-# Add src directory to path to import config
+# Add src directory to path to import config and providers
 sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'src'))
 from investigator.core.config import Config
+from investigator.core.providers import get_provider
 
 
 def detect_repo_type(repo_data: dict, repo_languages: dict) -> str:
@@ -77,13 +80,25 @@ def detect_repo_type(repo_data: dict, repo_languages: dict) -> str:
     return "generic"
 
 
-def get_github_token() -> Optional[str]:
-    """Get GitHub token from environment variables."""
-    token = os.getenv("GITHUB_TOKEN") or os.getenv("GITHUB_ADMIN_ORG_READ_TOKEN")
-    if not token:
-        print("Warning: No GitHub token found in environment variables.")
-        print("Set GITHUB_TOKEN or GITHUB_ADMIN_ORG_READ_TOKEN for better rate limits.")
+def get_token() -> Optional[str]:
+    """Get appropriate token based on configured provider."""
+    provider_type = os.getenv("GIT_PROVIDER", "github").lower()
+    if provider_type == "gitlab":
+        token = os.getenv("GITLAB_TOKEN")
+        if not token:
+            print("Warning: No GitLab token found in environment variables.")
+            print("Set GITLAB_TOKEN for better rate limits and private repo access.")
+    else:
+        token = os.getenv("GITHUB_TOKEN") or os.getenv("GITHUB_ADMIN_ORG_READ_TOKEN")
+        if not token:
+            print("Warning: No GitHub token found in environment variables.")
+            print("Set GITHUB_TOKEN or GITHUB_ADMIN_ORG_READ_TOKEN for better rate limits.")
     return token
+
+
+def get_github_token() -> Optional[str]:
+    """Get GitHub token from environment variables (legacy function for compatibility)."""
+    return get_token()
 
 
 def load_skip_repos(skip_file: str) -> Dict[str, str]:
@@ -118,148 +133,57 @@ def save_skip_repos(skip_file: str, skip_repos: Dict[str, str]) -> None:
 def has_recent_activity(repo: Dict, org_name: str, token: Optional[str] = None, years: int = 3) -> bool:
     """
     Check if a repository has had commits in the past N years.
-    
+
+    Supports both GitHub and GitLab via provider abstraction.
+
     Args:
-        repo: Repository data from GitHub API
-        org_name: GitHub organization name
-        token: GitHub personal access token
+        repo: Repository data from API
+        org_name: Organization/group name
+        token: Personal access token (auto-detected if not provided)
         years: Number of years to look back for activity
-    
+
     Returns:
         True if the repository has recent commits, False otherwise
     """
-    headers = {
-        "Accept": "application/vnd.github.v3+json"
-    }
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    
-    # Calculate date N years ago
-    cutoff_date = datetime.now() - timedelta(days=365 * years)
-    since_date = cutoff_date.isoformat() + "Z"
-    
-    repo_name = repo["name"]
-    url = f"https://api.github.com/repos/{org_name}/{repo_name}/commits"
-    params = {
-        "since": since_date,
-        "per_page": 1  # We only need to know if there's at least one commit
-    }
-    
-    try:
-        response = requests.get(url, headers=headers, params=params)
-        if response.status_code == 409:  # Empty repository
-            return False
-        if response.status_code == 404:  # Repository not found or no access
-            return False
-        response.raise_for_status()
-        
-        # If we get any commits back, the repo has recent activity
-        commits = response.json()
-        return len(commits) > 0
-        
-    except requests.exceptions.RequestException:
-        # If we can't check, assume it's active to avoid accidentally filtering it out
-        return True
+    # Get provider and use its method
+    provider = get_provider(token=token)
+
+    # Handle both GitHub ('name') and GitLab ('path') field names
+    repo_name = repo.get("name") or repo.get("path")
+    if not repo_name:
+        return True  # Can't check, assume active
+
+    return provider.has_recent_activity(org_name, repo_name, years)
 
 
 def fetch_all_organization_repos(org_name: str, token: Optional[str] = None) -> List[Dict]:
     """
-    Fetch ALL repositories from a GitHub organization or user account.
-    
+    Fetch ALL repositories from a GitHub/GitLab organization or user account.
+
+    Supports both GitHub and GitLab via provider abstraction.
+
     Args:
-        org_name: GitHub organization name or username
-        token: GitHub personal access token (optional, but recommended)
-    
+        org_name: Organization/group name or username
+        token: Personal access token (auto-detected if not provided)
+
     Returns:
         List of repository data dictionaries
     """
-    headers = {
-        "Accept": "application/vnd.github.v3+json"
-    }
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    
-    # First, determine if this is a user or organization
-    account_type = _detect_account_type(org_name, headers)
-    
-    if account_type == "user":
-        base_url = f"https://api.github.com/users/{org_name}/repos"
-        print(f"📍 Detected '{org_name}' as a GitHub user account")
-    elif account_type == "organization":
-        base_url = f"https://api.github.com/orgs/{org_name}/repos"
-        print(f"📍 Detected '{org_name}' as a GitHub organization")
+    # Get provider instance
+    provider = get_provider(token=token)
+    provider_name = provider.provider_name
+
+    print(f"📍 Using {provider_name} provider for '{org_name}'")
+
+    # Use provider's method to list repos
+    repos = provider.list_organization_repos(org_name)
+
+    if repos:
+        print(f"  Fetched {len(repos)} repositories from {provider_name}")
     else:
-        print(f"❌ Could not determine account type for '{org_name}' or account not found")
-        return []
-    
-    repos = []
-    page = 1
-    per_page = 100  # GitHub API max is 100 per page
-    
-    while True:
-        params = {
-            "per_page": per_page,
-            "page": page
-        }
-        
-        try:
-            response = requests.get(base_url, headers=headers, params=params)
-            response.raise_for_status()
-            
-            page_repos = response.json()
-            if not page_repos:
-                break
-                
-            repos.extend(page_repos)
-            
-            # Check rate limit
-            if "X-RateLimit-Remaining" in response.headers:
-                remaining = int(response.headers["X-RateLimit-Remaining"])
-                if remaining < 100:
-                    print(f"Warning: GitHub API rate limit low ({remaining} remaining)")
-                    if remaining < 10:
-                        print("Rate limit too low, stopping fetch")
-                        break
-            
-            print(f"  Fetched page {page} ({len(page_repos)} repos, total: {len(repos)})")
-            page += 1
-            time.sleep(0.2)  # Be nice to the API
-            
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching repositories: {e}")
-            break
-    
+        print(f"❌ Could not fetch repositories for '{org_name}' from {provider_name}")
+
     return repos
-
-
-def _detect_account_type(account_name: str, headers: dict) -> str:
-    """
-    Detect whether the account is a user or organization.
-    
-    Args:
-        account_name: GitHub account name to check
-        headers: HTTP headers for the request
-    
-    Returns:
-        "user", "organization", or "unknown"
-    """
-    try:
-        # Try to get account information
-        response = requests.get(f"https://api.github.com/users/{account_name}", headers=headers)
-        
-        if response.status_code == 200:
-            account_data = response.json()
-            account_type = account_data.get("type", "").lower()
-            
-            if account_type == "user":
-                return "user"
-            elif account_type == "organization":
-                return "organization"
-        
-        return "unknown"
-        
-    except requests.exceptions.RequestException:
-        return "unknown"
 
 
 def update_repos_json(repos: List[Dict], existing_repos_file: str) -> None:
@@ -348,10 +272,14 @@ def main():
         "prompts", "skip_repos.json"
     )
     
-    print(f"🚀 Starting repository sync for GitHub account '{org_name}'...")
+    # Determine provider
+    provider_type = os.getenv("GIT_PROVIDER", "github").lower()
+    provider_name = "GitLab" if provider_type == "gitlab" else "GitHub"
+
+    print(f"🚀 Starting repository sync for {provider_name} account '{org_name}'...")
     print("Filtering: non-archived repos with commits in the past 1 year.")
     print("Existing repositories and their metadata will be preserved.\n")
-    
+
     # Load existing repositories
     try:
         with open(repos_file, 'r') as f:
@@ -360,17 +288,18 @@ def main():
             print(f"📚 Loaded {len(existing_repo_names)} existing repositories from repos.json")
     except FileNotFoundError:
         existing_repo_names = set()
-    
+
     # Load existing skip list
     skip_repos = load_skip_repos(skip_file)
     if skip_repos:
         print(f"📋 Loaded {len(skip_repos)} previously skipped repositories")
-    
-    # Get GitHub token
-    token = get_github_token()
+
+    # Get token for the configured provider
+    token = get_token()
     if not token:
-        print("⚠️  Without a GitHub token, you may hit rate limits quickly.")
-        print("   Consider setting GITHUB_TOKEN environment variable.\n")
+        token_env = "GITLAB_TOKEN" if provider_type == "gitlab" else "GITHUB_TOKEN"
+        print(f"⚠️  Without a {provider_name} token, you may hit rate limits quickly.")
+        print(f"   Consider setting {token_env} environment variable.\n")
     
     # Fetch all repositories
     all_repos = fetch_all_organization_repos(org_name, token)
@@ -391,24 +320,27 @@ def main():
     already_in_repos_json = 0
     
     for repo in all_repos:
-        repo_name = repo["name"]
-        
+        # Handle both GitHub ('name') and GitLab ('path') field names
+        repo_name = repo.get("name") or repo.get("path")
+        if not repo_name:
+            continue
+
         # Check if repo is already in repos.json (no need to check activity)
         if repo_name in existing_repo_names:
             already_in_repos_json += 1
             continue
-        
+
         # Check if repo is in skip list
         if repo_name in skip_repos:
             skipped_from_cache += 1
             continue
-        
+
         # Check if archived
         if repo.get("archived", False):
             new_skips[repo_name] = "archived"
             print(f"   - Skipping {repo_name} (archived)")
             continue
-        
+
         # Add to list for activity check
         repos_to_check.append(repo)
     

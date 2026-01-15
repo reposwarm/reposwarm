@@ -802,30 +802,29 @@ async def clone_repository_activity(repo_url: str, repo_name: str) -> dict:
 def _shallow_clone_repository(repo_url: str, target_dir: str, depth: int = 1, logger=None) -> str:
     """
     Perform a shallow clone with specified depth to reduce memory usage.
-    
+
+    Supports both GitHub and GitLab via provider abstraction.
+
     Args:
         repo_url: Repository URL to clone
         target_dir: Target directory for the clone
         depth: Clone depth (default 1 for minimal history)
         logger: Logger instance
-        
+
     Returns:
         Path to the cloned repository
     """
     import subprocess
     import os
-    
+    from investigator.core.providers import get_provider
+
     # Ensure target directory doesn't exist
     os.makedirs(os.path.dirname(target_dir), exist_ok=True)
-    
-    # Add authentication to URL if needed
-    auth_url = repo_url
-    github_token = os.getenv('GITHUB_TOKEN')
-    if github_token and 'github.com' in repo_url:
-        # Insert token into URL for authentication
-        if repo_url.startswith('https://'):
-            auth_url = repo_url.replace('https://', f'https://{github_token}@')
-    
+
+    # Use provider abstraction to add authentication
+    provider = get_provider(repo_url=repo_url)
+    auth_url = provider.get_auth_url(repo_url)
+
     # Build git clone command with shallow options
     cmd = [
         'git', 'clone',
@@ -835,83 +834,76 @@ def _shallow_clone_repository(repo_url: str, target_dir: str, depth: int = 1, lo
         auth_url,
         target_dir
     ]
-    
+
     if logger:
-        logger.info(f"Running shallow clone: depth={depth}")
-    
-    # Mask the token in command for logging
-    log_cmd = ' '.join(cmd)
-    if github_token and github_token in log_cmd:
-        log_cmd = log_cmd.replace(github_token, '***HIDDEN***')
+        logger.info(f"Running shallow clone: depth={depth} (using {provider.provider_name})")
+
+    # Log sanitized URL
     if logger:
-        logger.debug(f"Clone command: {log_cmd}")
-    
+        safe_url = provider.sanitize_url(auth_url)
+        logger.debug(f"Clone command: git clone --depth {depth} --single-branch --no-tags {safe_url} {target_dir}")
+
     result = subprocess.run(
         cmd,
         capture_output=True,
         text=True,
         timeout=600  # 10 minute timeout
     )
-    
+
     if result.returncode != 0:
         # Sanitize error message to avoid exposing tokens
-        error_msg = result.stderr
-        if github_token and github_token in error_msg:
-            error_msg = error_msg.replace(github_token, '***HIDDEN***')
+        error_msg = provider.sanitize_url(result.stderr)
         raise Exception(f"Shallow clone failed: {error_msg}")
-    
+
     return target_dir
 
 
 def _minimal_clone_repository(repo_url: str, target_dir: str, logger=None) -> str:
     """
     Perform a minimal clone with aggressive optimization for low memory environments.
-    
+
+    Supports both GitHub and GitLab via provider abstraction.
+
     Args:
         repo_url: Repository URL to clone
         target_dir: Target directory for the clone
         logger: Logger instance
-        
+
     Returns:
         Path to the cloned repository
     """
     import subprocess
     import os
-    
+    from investigator.core.providers import get_provider
+
     # Ensure target directory doesn't exist
     os.makedirs(os.path.dirname(target_dir), exist_ok=True)
-    
-    # Add authentication to URL if needed
-    auth_url = repo_url
-    github_token = os.getenv('GITHUB_TOKEN')
-    if github_token and 'github.com' in repo_url:
-        if repo_url.startswith('https://'):
-            auth_url = repo_url.replace('https://', f'https://{github_token}@')
-    
+
+    # Use provider abstraction to add authentication
+    provider = get_provider(repo_url=repo_url)
+    auth_url = provider.get_auth_url(repo_url)
+
     # Initialize empty repository first
     os.makedirs(target_dir, exist_ok=True)
-    
+
     if logger:
-        logger.info("Performing minimal clone with aggressive optimizations")
-    
+        logger.info(f"Performing minimal clone with aggressive optimizations (using {provider.provider_name})")
+
     # Initialize repository
     subprocess.run(['git', 'init'], cwd=target_dir, check=True)
-    
-    # Add remote (don't log the URL with token)
+
+    # Add remote (log sanitized URL)
     if logger:
-        # Log sanitized URL without token
-        safe_url = repo_url
-        if github_token and github_token in auth_url:
-            safe_url = auth_url.replace(github_token, '***HIDDEN***')
+        safe_url = provider.sanitize_url(auth_url)
         logger.debug(f"Adding remote origin: {safe_url}")
     subprocess.run(['git', 'remote', 'add', 'origin', auth_url], cwd=target_dir, check=True)
-    
+
     # Configure to minimize memory usage
     subprocess.run(['git', 'config', 'core.compression', '0'], cwd=target_dir, check=True)
     subprocess.run(['git', 'config', 'http.postBuffer', '524288000'], cwd=target_dir, check=True)
     subprocess.run(['git', 'config', 'pack.windowMemory', '10m'], cwd=target_dir, check=True)
     subprocess.run(['git', 'config', 'pack.packSizeLimit', '100m'], cwd=target_dir, check=True)
-    
+
     # Fetch with minimal data
     fetch_cmd = [
         'git', 'fetch',
@@ -920,7 +912,7 @@ def _minimal_clone_repository(repo_url: str, target_dir: str, logger=None) -> st
         '--filter=blob:none',  # Lazy fetch blobs
         'origin', 'HEAD'
     ]
-    
+
     result = subprocess.run(
         fetch_cmd,
         cwd=target_dir,
@@ -928,17 +920,15 @@ def _minimal_clone_repository(repo_url: str, target_dir: str, logger=None) -> st
         text=True,
         timeout=600
     )
-    
+
     if result.returncode != 0:
         # Sanitize error message to avoid exposing tokens
-        error_msg = result.stderr
-        if github_token and github_token in error_msg:
-            error_msg = error_msg.replace(github_token, '***HIDDEN***')
+        error_msg = provider.sanitize_url(result.stderr)
         raise Exception(f"Minimal fetch failed: {error_msg}")
-    
+
     # Checkout the fetched branch
     subprocess.run(['git', 'checkout', 'FETCH_HEAD'], cwd=target_dir, check=True)
-    
+
     return target_dir
 
 
