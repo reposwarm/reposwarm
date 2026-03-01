@@ -133,11 +133,11 @@ async def _update_repos_from_codecommit() -> dict:
     """
     import json
     from investigator.core.git_manager import GitRepositoryManager
-    from investigator.core.logger import create_logger
+    import logging
 
     try:
         # Create a logger and GitRepositoryManager
-        logger = create_logger("codecommit_sync", "INFO")
+        logger = logging.getLogger("codecommit_sync")
         git_manager = GitRepositoryManager(logger)
 
         # List CodeCommit repositories
@@ -234,10 +234,10 @@ async def _update_repos_from_gitlab() -> dict:
     """
     import json
     from investigator.core.git_manager import GitRepositoryManager
-    from investigator.core.logger import create_logger
+    import logging
 
     try:
-        logger = create_logger("gitlab_sync", "INFO")
+        logger = logging.getLogger("gitlab_sync")
         git_manager = GitRepositoryManager(logger)
 
         result = git_manager.list_gitlab_repositories()
@@ -325,10 +325,10 @@ async def _update_repos_from_bitbucket() -> dict:
     """
     import json
     from investigator.core.git_manager import GitRepositoryManager
-    from investigator.core.logger import create_logger
+    import logging
 
     try:
-        logger = create_logger("bitbucket_sync", "INFO")
+        logger = logging.getLogger("bitbucket_sync")
         git_manager = GitRepositoryManager(logger)
 
         result = git_manager.list_bitbucket_repositories()
@@ -416,10 +416,10 @@ async def _update_repos_from_azure_devops() -> dict:
     """
     import json
     from investigator.core.git_manager import GitRepositoryManager
-    from investigator.core.logger import create_logger
+    import logging
 
     try:
-        logger = create_logger("azure_devops_sync", "INFO")
+        logger = logging.getLogger("azure_devops_sync")
         git_manager = GitRepositoryManager(logger)
 
         result = git_manager.list_azure_devops_repositories()
