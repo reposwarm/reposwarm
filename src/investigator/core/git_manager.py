@@ -127,6 +127,42 @@ class GitRepositoryManager:
         
         return url
     
+
+    def _strip_credentials_from_remote(self, repo_dir: str) -> None:
+        """
+        Remove embedded credentials from the git remote URL in .git/config.
+        
+        After clone/update, credentials may persist in the remote URL.
+        This strips them to prevent credential leakage via .git/config.
+        """
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["git", "remote", "get-url", "origin"],
+                cwd=repo_dir, capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                return
+            
+            current_url = result.stdout.strip()
+            parsed = urlparse(current_url)
+            
+            if parsed.username or parsed.password:
+                clean_netloc = parsed.hostname or ''
+                if parsed.port:
+                    clean_netloc += f":{parsed.port}"
+                clean_url = urlunparse((
+                    parsed.scheme, clean_netloc, parsed.path,
+                    parsed.params, parsed.query, parsed.fragment
+                ))
+                subprocess.run(
+                    ["git", "remote", "set-url", "origin", clean_url],
+                    cwd=repo_dir, check=True
+                )
+                self.logger.debug("Stripped credentials from git remote URL")
+        except Exception as e:
+            self.logger.debug(f"Could not strip credentials from remote: {e}")
+
     def clone_or_update(self, repo_location: str, target_dir: str) -> str:
         """
         Clone a repository or update it if it already exists.
@@ -142,9 +178,13 @@ class GitRepositoryManager:
         auth_repo_location = self._add_authentication(repo_location)
         
         if self._is_existing_repo(target_dir):
-            return self._update_repository(target_dir, auth_repo_location)
+            result = self._update_repository(target_dir, auth_repo_location)
         else:
-            return self._clone_repository(auth_repo_location, target_dir)
+            result = self._clone_repository(auth_repo_location, target_dir)
+        
+        # Strip credentials from .git/config to prevent leakage
+        self._strip_credentials_from_remote(result)
+        return result
     
     def _add_authentication(self, repo_location: str) -> str:
         """
