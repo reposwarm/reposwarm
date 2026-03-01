@@ -1,0 +1,11 @@
+# Test fixtures — mock credentials in unit tests
+test-user:test-pass@git-codecommit
+existing-user:existing-pass@git-codecommit
+github-token@github.com
+oauth2:glpat-test-token@gitlab
+oauth2:existing-token@gitlab
+bb-user:bb-app-pass@bitbucket
+existing:creds@bitbucket
+:azure-pat-token@dev.azure.com
+user:existing-pat@dev.azure.com
+:azure-pat-token@org.visualstudio.com
