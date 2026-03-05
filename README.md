@@ -1,4 +1,6 @@
 # RepoSwarm🤖
+
+> **📦 This repository was previously `loki-bedlam/repo-swarm` and has been moved to the [RepoSwarm organization](https://github.com/reposwarm). Old URLs redirect automatically.**
 ![RepoSwarm](RepoSwarm1.jpg)
 
 🎬 **Architecture Overview (click to play)**  
