@@ -16,9 +16,9 @@
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> •
+  <a href="#what-is-reposwarm">What Is It</a> •
   <a href="#how-it-works">How It Works</a> •
-  <a href="#configuration">Configuration</a> •
-  <a href="#related-projects">Ecosystem</a> •
+  <a href="#ecosystem">Ecosystem</a> •
   <a href="#contributing">Contributing</a>
 </p>
 
@@ -26,9 +26,33 @@
 
 ---
 
+## Quick Start
+
+Install the CLI and bootstrap everything in one shot:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/reposwarm/reposwarm-cli/main/install.sh | sh
+```
+
+Then:
+
+```bash
+reposwarm new --local             # Bootstrap everything: Temporal, API, Worker, UI
+reposwarm doctor                  # Full health check
+reposwarm repos add my-app --url https://github.com/org/my-app
+reposwarm investigate my-app      # Run your first investigation
+reposwarm dashboard               # Watch it work
+```
+
+That's it. The CLI handles setup, configuration, investigation, diagnostics, and results — all from a single binary.
+
+👉 **Full CLI docs:** [**reposwarm-cli**](https://github.com/reposwarm/reposwarm-cli)
+
+---
+
 ## What is RepoSwarm?
 
-RepoSwarm is an intelligent agentic engine that **automatically analyzes your entire codebase portfolio** and generates standardized architecture documentation. Point it at your GitHub repos and get back clean, structured `.arch.md` files — perfect as AI agent context, onboarding docs, or architecture reviews.
+RepoSwarm automatically analyzes your entire codebase portfolio and generates standardized architecture documentation. Point it at your GitHub repos (or CodeCommit, GitLab, Azure DevOps, Bitbucket) and get back clean, structured `.arch.md` files — perfect as AI agent context, onboarding docs, or architecture reviews.
 
 <p align="center">
   <img src="assets/banner-swarm.png" alt="RepoSwarm Agents" width="80%">
@@ -36,16 +60,18 @@ RepoSwarm is an intelligent agentic engine that **automatically analyzes your en
 
 ### ✨ Key Features
 
-- 🔍 **AI-Powered Analysis** — Uses Claude Code SDK to deeply understand codebases
+- 🔍 **AI-Powered Analysis** — Uses Claude to deeply understand codebases
 - 📝 **Standardized Output** — Generates consistent `.arch.md` architecture files
-- 🔄 **Incremental Updates** — Daily Temporal workflows only re-analyze repos with new commits
-- 💾 **Smart Caching** — DynamoDB or file-based caching avoids redundant analysis
+- 🔄 **Incremental Updates** — Only re-analyzes repos with new commits
+- 💾 **Smart Caching** — DynamoDB or file-based caching avoids redundant work
 - 🎯 **Type-Aware Prompts** — Specialized analysis for backend, frontend, mobile, infra, and libraries
-- 📦 **Results Hub** — All architecture docs committed to a centralized results repository
+- 📦 **Results Hub** — All architecture docs committed to a centralized repository
+- 🔌 **Multi-Provider** — Anthropic API, Amazon Bedrock, or LiteLLM proxy
+- 🌐 **Multi-Git** — GitHub, GitLab, CodeCommit, Azure DevOps, Bitbucket
 
 ### 📋 See It In Action
 
-Check out [RepoSwarm's self-analysis report](https://github.com/royosherove/repo-swarm-sample-results-hub/blob/main/repo-swarm.arch.md) — RepoSwarm investigating its own codebase!
+Check out [RepoSwarm's self-analysis](https://github.com/royosherove/repo-swarm-sample-results-hub/blob/main/repo-swarm.arch.md) — RepoSwarm investigating its own codebase!
 
 🎬 **Architecture Overview (click to play)**
 
@@ -70,71 +96,71 @@ graph TB
     style G fill:#e8f5e8,color:#000
 ```
 
-**Workflow Pipeline:**
-
-1. **Cache Check** → Query DynamoDB to see if repo was already analyzed
-2. **Clone** → Clone the repository to temporary storage
-3. **Type Detection** → Determine if it's backend, frontend, mobile, etc.
-4. **Structure Analysis** → Build a tree of files and directories
-5. **Prompt Selection** → Choose analysis prompts based on repo type
-6. **AI Analysis** → Send prompts + code context to Claude
-7. **Result Storage** → Save results and generate markdown files
-8. **Cleanup** → Remove temporary files
+**Pipeline:** Cache check → Clone → Type detection → Structure analysis → Prompt selection → AI analysis → Store results → Cleanup
 
 ---
 
-## Quick Start
+## Common Workflows
 
-### Prerequisites
-
-- Python 3.12+
-- Claude API key
-
-### Installation
+### Run an Investigation
 
 ```bash
-# Install mise (tool version manager)
-brew install mise        # macOS
-# or: curl https://mise.run | sh   # Linux/WSL
-
-# Clone and setup
-git clone https://github.com/reposwarm/reposwarm.git
-cd reposwarm
-
-# 🚀 Interactive setup wizard (recommended)
-mise get-started
+reposwarm repos add my-app --url https://github.com/org/my-app
+reposwarm investigate my-app
+reposwarm wf progress
+reposwarm results read my-app
 ```
 
-The wizard configures your Claude API key, GitHub integration, and architecture hub repository.
-
-<details>
-<summary><strong>Manual setup</strong></summary>
+### Investigate All Repos in Parallel
 
 ```bash
-cp env.local.example .env.local
-# Edit .env.local with your ANTHROPIC_API_KEY
-mise install
-mise run dev-dependencies
+reposwarm investigate --all --parallel 3
+reposwarm dashboard
 ```
-</details>
 
-### Running
+### Diagnose Issues
 
 ```bash
-# Analyze all configured repositories
-mise investigate-all
-
-# Analyze a single repository
-mise investigate-one https://github.com/user/repo
+reposwarm doctor                       # Full health check
+reposwarm errors                       # Stalls + failures
+reposwarm wf retry <workflow-id>       # Re-run a failed investigation
 ```
+
+### Search Across All Architecture Docs
+
+```bash
+reposwarm results search "authentication"
+reposwarm results diff repo-a repo-b
+reposwarm results export --all -d ./docs
+```
+
+👉 **Full command reference:** [**reposwarm-cli README**](https://github.com/reposwarm/reposwarm-cli)
 
 ---
 
 ## Configuration
 
+### LLM Provider
+
+```bash
+reposwarm config provider setup        # Interactive (Anthropic, Bedrock, LiteLLM)
+```
+
+### Git Provider
+
+```bash
+reposwarm config git setup             # Interactive (GitHub, GitLab, CodeCommit, Azure, Bitbucket)
+```
+
 ### Adding Repositories
 
-Edit `prompts/repos.json`:
+```bash
+reposwarm repos add my-backend --url https://github.com/org/my-backend
+reposwarm repos add my-frontend --url https://github.com/org/my-frontend
+reposwarm repos discover               # Auto-discover from CodeCommit
+```
+
+Or edit `prompts/repos.json` directly:
 
 ```json
 {
@@ -143,11 +169,6 @@ Edit `prompts/repos.json`:
       "url": "https://github.com/org/my-backend",
       "type": "backend",
       "description": "Main API service"
-    },
-    "my-frontend": {
-      "url": "https://github.com/org/my-frontend",
-      "type": "frontend",
-      "description": "React web app"
     }
   }
 }
@@ -166,54 +187,15 @@ Edit `prompts/repos.json`:
 
 ---
 
-## Mise Tasks
+## Ecosystem
 
-<details>
-<summary><strong>Development</strong></summary>
-
-```bash
-mise dev-server          # Start Temporal server
-mise dev-dependencies    # Install Python dependencies
-mise dev-worker          # Start Temporal worker
-mise dev-client          # Run workflow client
-mise kill                # Stop all Temporal processes
-mise dev-repos-list      # List available repositories
-mise dev-repos-update    # Update repository list from GitHub
-```
-</details>
-
-<details>
-<summary><strong>Investigation</strong></summary>
-
-```bash
-mise investigate-all     # Analyze all repositories locally
-mise investigate-one     # Analyze single repository locally
-mise investigate-public  # Analyze public repository
-mise investigate-debug   # Analyze with detailed logging
-```
-</details>
-
-<details>
-<summary><strong>Testing</strong></summary>
-
-```bash
-mise verify-config       # Validate configuration
-mise test-all            # Run complete test suite
-mise test-units          # Run unit tests only
-mise test-integration    # Run integration tests
-mise test-dynamodb       # Test DynamoDB functionality
-```
-</details>
-
-<details>
-<summary><strong>Docker</strong></summary>
-
-```bash
-mise docker-dev          # Build and run for development
-mise docker-debug        # Debug with verbose logging
-mise docker-test-build   # Test Docker build process
-```
-</details>
+| Project | Description | Install |
+|---------|-------------|---------|
+| ⌨️ [**reposwarm-cli**](https://github.com/reposwarm/reposwarm-cli) | CLI — setup, investigate, diagnose, results | `curl -fsSL .../install.sh \| sh` |
+| 🔌 [**reposwarm-api**](https://github.com/reposwarm/reposwarm-api) | REST API server for repos, workflows, prompts | Managed by CLI |
+| 📊 [**reposwarm-ui**](https://github.com/reposwarm/reposwarm-ui) | Next.js dashboard for browsing investigations | Managed by CLI |
+| 🤖 **reposwarm** (this repo) | Core engine — Temporal workflows + analysis | Managed by CLI |
+| 📋 [**sample-results-hub**](https://github.com/royosherove/repo-swarm-sample-results-hub) | Example output — generated `.arch.md` files | — |
 
 ---
 
@@ -242,59 +224,11 @@ reposwarm/
 
 ---
 
-## Production Deployment
-
-RepoSwarm uses [Temporal](https://temporal.io/) for reliable workflow orchestration.
-
-```bash
-# Start Temporal server
-mise dev-server
-
-# Run worker (connects to Temporal)
-TEMPORAL_SERVER_URL=your-server:7233 mise dev-worker
-
-# Trigger investigation
-mise dev-client
-
-# Monitor
-mise monitor-workflow investigate-repos-workflow
-```
-
-<details>
-<summary><strong>Programmatic client integration</strong></summary>
-
-```python
-from temporalio.client import Client
-
-async def trigger_investigation():
-    client = await Client.connect("your-temporal-server:7233")
-    await client.execute_workflow(
-        "investigate_repos_workflow",
-        args=["repo-url"],
-        id="workflow-id",
-        task_queue="investigation-queue"
-    )
-```
-</details>
-
----
-
-## Related Projects
-
-| Project | Description |
-|---------|-------------|
-| 📊 [**reposwarm-ui**](https://github.com/reposwarm/reposwarm-ui) | Next.js dashboard for browsing investigations |
-| 🔌 [**reposwarm-api**](https://github.com/reposwarm/reposwarm-api) | REST API server for repos, workflows, prompts |
-| ⌨️ [**reposwarm-cli**](https://github.com/reposwarm/reposwarm-cli) | CLI tool for humans and AI agents |
-| 📋 [**sample-results-hub**](https://github.com/royosherove/repo-swarm-sample-results-hub) | Example output — generated `.arch.md` files |
-
----
-
 ## Credits
 
 RepoSwarm was born out of a hackathon at [Verbit](https://verbit.ai/), built by:
 - [Moshe](https://github.com/mosher)
-- [Idan](https://github.com/Idandos)  
+- [Idan](https://github.com/Idandos)
 - [Roy](https://github.com/royosherove)
 
 ---
@@ -304,8 +238,7 @@ RepoSwarm was born out of a hackathon at [Verbit](https://verbit.ai/), built by:
 1. Fork the repository
 2. Create a feature branch
 3. Make changes and add tests
-4. Run `mise test-all`
-5. Submit a pull request
+4. Submit a pull request
 
 ---
 
