@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/reposwarm/reposwarm/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-PolyForm_NC-blue.svg?style=for-the-badge" alt="License"></a>
+  <a href="https://github.com/reposwarm/reposwarm/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=for-the-badge" alt="License"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/Python-3.12+-3776AB.svg?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.12+"></a>
   <a href="https://www.youtube.com/watch?v=rOMf9xvpgtc"><img src="https://img.shields.io/badge/Demo-YouTube-red.svg?style=for-the-badge&logo=youtube" alt="YouTube Demo"></a>
 </p>
@@ -244,6 +244,4 @@ RepoSwarm was born out of a hackathon at [Verbit](https://verbit.ai/), built by:
 
 ## License
 
-This project is licensed under the [Polyform Noncommercial License 1.0.0](LICENSE).
-You may use, copy, and modify the code for non-commercial purposes only.
-For commercial licensing, contact roy at osherove dot com.
+This project is licensed under the [Apache License 2.0](LICENSE).
