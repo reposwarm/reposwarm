@@ -194,13 +194,16 @@ Or edit `prompts/repos.json` directly:
 
 ## Ecosystem
 
-| Project | Description | Install |
-|---------|-------------|---------|
+| Project | Description | Install / Pull |
+|---------|-------------|----------------|
 | ⌨️ [**reposwarm-cli**](https://github.com/reposwarm/reposwarm-cli) | CLI — setup, investigate, diagnose, results | `curl -fsSL .../install.sh \| sh` |
-| 🔌 [**reposwarm-api**](https://github.com/reposwarm/reposwarm-api) | REST API server for repos, workflows, prompts | Managed by CLI |
-| 📊 [**reposwarm-ui**](https://github.com/reposwarm/reposwarm-ui) | Next.js dashboard for browsing investigations | Managed by CLI |
-| 🤖 **reposwarm** (this repo) | Core engine — Temporal workflows + analysis | Managed by CLI |
+| 🔌 [**reposwarm-api**](https://github.com/reposwarm/reposwarm-api) | REST API server for repos, workflows, prompts | `docker pull ghcr.io/reposwarm/api:latest` |
+| 📊 [**reposwarm-ui**](https://github.com/reposwarm/reposwarm-ui) | Next.js dashboard for browsing investigations | `docker pull ghcr.io/reposwarm/ui:latest` |
+| 🤖 **reposwarm** (this repo) | Core engine — Temporal workflows + analysis | `docker pull ghcr.io/reposwarm/worker:latest` |
+| 🧠 [**reposwarm-askbox**](https://github.com/reposwarm/reposwarm-askbox) | AI agent for querying architecture docs | `docker pull ghcr.io/reposwarm/askbox:latest` |
 | 📋 [**sample-results-hub**](https://github.com/royosherove/repo-swarm-sample-results-hub) | Example output — generated `.arch.md` files | — |
+
+All Docker images are multi-arch (`linux/amd64` + `linux/arm64`) and published automatically on every push to `main`.
 
 ---
 

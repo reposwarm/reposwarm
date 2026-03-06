@@ -48,3 +48,32 @@ jobs:
       - name: Run integration tests
         run: |
           python -m pytest tests/integration/ -v --tb=short
+
+  docker:
+    needs: integration-tests
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/reposwarm/worker:latest
+            ghcr.io/reposwarm/worker:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
