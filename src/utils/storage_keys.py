@@ -10,6 +10,25 @@ from typing import Optional, Tuple
 from pydantic import BaseModel, Field, validator
 
 
+def _sanitize_for_filesystem(name: str) -> str:
+    """Sanitize a string for use as a filesystem path component.
+    
+    Handles URLs (https://github.com/org/repo), paths, and special chars.
+    """
+    # Strip common URL prefixes
+    for prefix in ('https://', 'http://', 'git@', 'ssh://'):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
+    # Replace path separators, colons, and other unsafe chars with underscores
+    name = re.sub(r'[/\\:*?"<>|@#]', '_', name)
+    # Collapse multiple underscores
+    name = re.sub(r'_+', '_', name)
+    # Strip leading/trailing underscores and dots
+    name = name.strip('_.')
+    return name
+
+
 class PromptCacheKey(BaseModel):
     """Model for generating prompt cache keys."""
     repo_name: str = Field(..., description="Repository name")
@@ -19,10 +38,9 @@ class PromptCacheKey(BaseModel):
     
     @validator('repo_name', 'step_name')
     def validate_no_special_chars(cls, v):
-        """Ensure no special characters that could cause issues in file names."""
-        if '#' in v or '/' in v or '\\' in v:
-            raise ValueError(f"Invalid characters in name: {v}")
-        return v
+        """Sanitize names for safe use in file names and storage keys."""
+        # Sanitize URLs and special chars instead of rejecting them
+        return _sanitize_for_filesystem(v)
     
     @validator('commit_sha')
     def validate_commit_sha(cls, v):
@@ -36,9 +54,9 @@ class PromptCacheKey(BaseModel):
         return f"{self.repo_name}_{self.step_name}_{self.commit_sha}_v{self.prompt_version}"
     
     def to_file_safe_key(self) -> str:
-        """Generate a file-system safe version of the key - SAME as storage key."""
-        # Use the exact same format as storage key
-        return self.to_storage_key()
+        """Generate a file-system safe version of the key."""
+        safe_repo = _sanitize_for_filesystem(self.repo_name)
+        return f"{safe_repo}_{self.step_name}_{self.commit_sha}_v{self.prompt_version}"
     
     @classmethod
     def parse_from_key(cls, storage_key: str) -> Optional['PromptCacheKey']:
@@ -120,9 +138,8 @@ class InvestigationMetadataKey(BaseModel):
     
     def to_file_safe_key(self) -> str:
         """Generate a file-system safe version of the key."""
-        # For files, we need to include the analysis type to make it unique
-        # This is because DynamoDB uses composite keys but files need a single name
-        return f"{self.repo_name}_{self.analysis_type}"
+        safe_repo = _sanitize_for_filesystem(self.repo_name)
+        return f"{safe_repo}_{self.analysis_type}"
     
     @classmethod
     def parse_from_key(cls, storage_key: str) -> Optional['InvestigationMetadataKey']:
@@ -159,9 +176,9 @@ class PromptDataKey(BaseModel):
         return f"{self.repo_name}_{self.step_name}_{self.unique_id}"
     
     def to_file_safe_key(self) -> str:
-        """Generate a file-system safe version of the key - SAME as storage key."""
-        # Use the exact same format as storage key
-        return self.to_storage_key()
+        """Generate a file-system safe version of the key."""
+        safe_repo = _sanitize_for_filesystem(self.repo_name)
+        return f"{safe_repo}_{self.step_name}_{self.unique_id}"
     
     @classmethod
     def parse_from_key(cls, storage_key: str) -> Optional['PromptDataKey']:

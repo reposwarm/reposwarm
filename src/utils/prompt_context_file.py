@@ -42,9 +42,21 @@ class FileBasedPromptContext(PromptContextBase):
                 project_root = Path(__file__).parent.parent.parent  # Go up from src/utils/ to project root
                 base_dir = project_root / 'temp' / 'prompt_context_storage'
             
-            self._storage_dir = Path(base_dir) / self.repo_name
+            self._storage_dir = Path(base_dir) / self._safe_repo_name()
             self._storage_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"Using file storage at: {self._storage_dir}")
+    
+    def _safe_repo_name(self) -> str:
+        """Sanitize repo name for filesystem use (handles URLs)."""
+        import re
+        name = self.repo_name
+        for prefix in ('https://', 'http://', 'git@', 'ssh://'):
+            if name.startswith(prefix):
+                name = name[len(prefix):]
+                break
+        name = re.sub(r'[/\\:*?"<>|@#]', '_', name)
+        name = re.sub(r'_+', '_', name)
+        return name.strip('_.')
     
     def _get_file_path(self, key: str) -> Path:
         """Get the file path for a given key."""
@@ -69,7 +81,7 @@ class FileBasedPromptContext(PromptContextBase):
             step_name=self.step_name,
             unique_id=unique_id
         )
-        self.data_reference_key = key_obj.to_storage_key()
+        self.data_reference_key = key_obj.to_file_safe_key()
         
         logger.info(f"Saving prompt data to file with key: {self.data_reference_key}")
         
@@ -81,7 +93,7 @@ class FileBasedPromptContext(PromptContextBase):
             "repo_name": self.repo_name
         }
         
-        file_path = self._get_file_path(key_obj.to_file_safe_key())
+        file_path = self._get_file_path(self.data_reference_key)
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
         
@@ -211,9 +223,21 @@ class FileBasedPromptContextManager(PromptContextManagerBase):
             project_root = Path(__file__).parent.parent.parent  # Go up from src/utils/ to project root
             base_dir = project_root / 'temp' / 'prompt_context_storage'
         
-        self._storage_dir = Path(base_dir) / repo_name
+        self._storage_dir = Path(base_dir) / self._safe_repo_name(repo_name)
         self._storage_dir.mkdir(parents=True, exist_ok=True)
     
+    @staticmethod
+    def _safe_repo_name(name: str) -> str:
+        """Sanitize repo name for filesystem use (handles URLs)."""
+        import re
+        for prefix in ('https://', 'http://', 'git@', 'ssh://'):
+            if name.startswith(prefix):
+                name = name[len(prefix):]
+                break
+        name = re.sub(r'[/\\:*?"<>|@#]', '_', name)
+        name = re.sub(r'_+', '_', name)
+        return name.strip('_.')
+
     def create_context_for_step(self, step_name: str, context_config: List = None) -> FileBasedPromptContext:
         """
         Create a new file-based context for an analysis step with proper context references.

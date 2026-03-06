@@ -38,27 +38,48 @@ def validate_environment():
     except ValueError as e:
         errors.append(f"Invalid max tokens: {e}")
 
-    # Required API keys
-    if not os.getenv('ANTHROPIC_API_KEY'):
-        errors.append("ANTHROPIC_API_KEY environment variable is required for Claude API access")
+    # Required API keys — depends on provider
+    use_bedrock = os.getenv('CLAUDE_PROVIDER') == 'bedrock' or os.getenv('CLAUDE_CODE_USE_BEDROCK') == '1'
+    if use_bedrock:
+        logger.info("  ✓ Using Amazon Bedrock provider")
+        # Bedrock doesn't need ANTHROPIC_API_KEY
+        # AWS credentials can come from IAM role, profile, or env vars
+        try:
+            import boto3
+            sts = boto3.client('sts')
+            identity = sts.get_caller_identity()
+            logger.info(f"  ✓ AWS identity: {identity.get('Arn', 'unknown')}")
+        except Exception as e:
+            errors.append(f"AWS credentials not available (needed for Bedrock): {e}")
     else:
-        logger.info("  ✓ Anthropic API key present")
+        if not os.getenv('ANTHROPIC_API_KEY'):
+            errors.append("ANTHROPIC_API_KEY environment variable is required for Claude API access (or set CLAUDE_PROVIDER=bedrock)")
+        else:
+            logger.info("  ✓ Anthropic API key present")
 
     if not os.getenv('GITHUB_TOKEN'):
-        errors.append("GITHUB_TOKEN environment variable is required for GitHub API access")
+        warnings.append("GITHUB_TOKEN not set — public repos work but private repos will fail")
+        logger.info("  ⚠ No GitHub token — public repos only")
     else:
         logger.info("  ✓ GitHub token present")
 
     # AWS configuration for DynamoDB
-    if not os.getenv('AWS_ACCESS_KEY_ID'):
-        errors.append("AWS_ACCESS_KEY_ID environment variable is required for DynamoDB access")
+    # If using Bedrock, AWS creds are already validated above
+    # If using IAM role, boto3 auto-discovers credentials
+    if not use_bedrock:
+        # Only check explicit AWS creds when NOT on Bedrock (which implies AWS env)
+        has_aws_creds = (os.getenv('AWS_ACCESS_KEY_ID') or
+                        os.getenv('AWS_PROFILE') or
+                        os.getenv('AWS_CONTAINER_CREDENTIALS_RELATIVE_URI'))
+        if not has_aws_creds:
+            try:
+                import boto3
+                boto3.client('sts').get_caller_identity()
+                logger.info("  ✓ AWS credentials via IAM role")
+            except Exception:
+                warnings.append("No AWS credentials found — DynamoDB caching may not work")
     else:
-        logger.info("  ✓ AWS access key present")
-
-    if not os.getenv('AWS_SECRET_ACCESS_KEY'):
-        errors.append("AWS_SECRET_ACCESS_KEY environment variable is required for DynamoDB access")
-    else:
-        logger.info("  ✓ AWS secret key present")
+        logger.info("  ✓ AWS credentials shared with Bedrock")
 
     if not os.getenv('AWS_DEFAULT_REGION'):
         warnings.append("AWS_DEFAULT_REGION not set, using default 'us-east-1'")
