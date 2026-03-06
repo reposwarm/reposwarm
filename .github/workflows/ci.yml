@@ -49,10 +49,35 @@ jobs:
         run: |
           python -m pytest tests/integration/ -v --tb=short
 
-  docker:
-    needs: integration-tests
+  changes:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check for code changes
+        id: filter
+        run: |
+          FILES=$(git diff --name-only HEAD~1 HEAD)
+          echo "Changed files:"
+          echo "$FILES"
+          CODE_CHANGED="false"
+          while IFS= read -r file; do
+            case "$file" in
+              *.md|LICENSE|.gitignore|docs/*) ;;
+              *) CODE_CHANGED="true"; break ;;
+            esac
+          done <<< "$FILES"
+          echo "code=$CODE_CHANGED" >> "$GITHUB_OUTPUT"
+
+  docker:
+    needs: [integration-tests, changes]
+    runs-on: ubuntu-latest
+    if: needs.changes.outputs.code == 'true'
     permissions:
       contents: read
       packages: write
