@@ -24,11 +24,14 @@ class ClaudeAnalyzer:
 
     def __init__(self, api_key: str, logger):
         self.logger = logger
-        self.use_bedrock = os.getenv('CLAUDE_PROVIDER') == 'bedrock'
+        self.use_bedrock = (
+            os.getenv('CLAUDE_PROVIDER') == 'bedrock' or
+            os.getenv('CLAUDE_CODE_USE_BEDROCK') == '1'
+        )
 
         if self.use_bedrock:
             from anthropic import AnthropicBedrock
-            aws_region = os.getenv('AWS_DEFAULT_REGION', 'us-east-1')
+            aws_region = os.getenv('AWS_REGION', os.getenv('AWS_DEFAULT_REGION', 'us-east-1'))
             self.client = AnthropicBedrock(aws_region=aws_region)
             self.logger.info(f"Using Bedrock provider in region {aws_region}")
         else:

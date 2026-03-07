@@ -8,9 +8,9 @@ import os
 class Config:
     """Configuration constants for the investigator."""
     
-    # Claude API settings
-    CLAUDE_MODEL = "claude-sonnet-4-6-20260120"
-    MAX_TOKENS = 6000
+    # Claude API settings - read from env, with sensible defaults
+    CLAUDE_MODEL = os.getenv('ANTHROPIC_MODEL') or os.getenv('CLAUDE_MODEL') or "claude-sonnet-4-6-20260120"
+    MAX_TOKENS = int(os.getenv('MAX_TOKENS', '6000'))
     
     # Valid Claude model names for validation (4.x models only)
     # See: https://platform.claude.com/docs/en/about-claude/models/overview
@@ -94,6 +94,9 @@ class Config:
             ValueError: If model name is not in VALID_CLAUDE_MODELS
         """
         if model_name not in Config.VALID_CLAUDE_MODELS:
+            # Allow Bedrock model IDs (e.g. us.anthropic.claude-sonnet-4-20250514-v1:0) to pass through
+            if model_name.startswith(('us.anthropic.', 'anthropic.')):
+                return model_name
             valid_models_str = ", ".join(Config.VALID_CLAUDE_MODELS)
             raise ValueError(f"Invalid Claude model '{model_name}'. Valid models: {valid_models_str}")
         return model_name
