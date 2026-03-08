@@ -90,7 +90,9 @@ try:
     write_analysis_result_activity,
     cleanup_repository_activity,
     read_dependencies_activity,
-    cache_dependencies_activity
+    cache_dependencies_activity,
+    create_dependency_batches_activity,
+    retrieve_batch_content_activity
 )
     logger.info("  ✓ Imported investigate activities")
 except ImportError as e:
@@ -245,7 +247,9 @@ async def main():
             check_dynamodb_health,
             cleanup_old_health_checks,
             read_dependencies_activity,
-            cache_dependencies_activity
+            cache_dependencies_activity,
+            create_dependency_batches_activity,
+            retrieve_batch_content_activity
         ]
         logger.info(f"  Activities: {[a.__name__ for a in all_activities]}")
         

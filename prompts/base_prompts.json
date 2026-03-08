@@ -19,7 +19,12 @@
       "description": "Analyze dependencies and external libraries",
       "context": [
         {"type": "step", "val": "hl_overview"}
-      ]
+      ],
+      "map_reduce": {
+        "batch_prompt": "../shared/dependencies_batch.md",
+        "reduce_prompt": "../shared/dependencies_reduce.md",
+        "data_source": "dependencies"
+      }
     },
     {
       "name": "core_entities",

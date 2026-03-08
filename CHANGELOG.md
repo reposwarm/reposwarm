@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-03-08 — Map-reduce batching for large dependency analysis
+
+### Problem
+
+Large repositories (e.g. quarkus with 2,215 dependency files / 13.4MB) had their dependency data truncated to 500KB to fit within Temporal's 4MB gRPC limit and Claude's 200K token context window. This meant ~96% of dependency data was lost, producing incomplete analysis for large repos.
+
+### Solution
+
+Implemented a map-reduce pattern for dependency analysis: when estimated tokens exceed a configurable threshold (default 50K), the system automatically splits dependencies into batches, analyzes each batch independently, then synthesizes all batch results into a unified dependency analysis.
+
+### Changes
+
+- **`src/investigator/core/config.py`** — Added `BATCH_TOKEN_BUDGET` (100K tokens per batch), `MIN_TOKENS_FOR_BATCHING` (50K threshold), and `INTER_BATCH_DELAY_SECONDS` (2s default) configuration constants.
+- **`src/activities/investigate_activities.py`** — Modified `read_dependencies_activity` to return `needs_batching` flag and `total_tokens_estimate` (auto-computed at runtime). Added `create_dependency_batches_activity` which loads raw deps from DynamoDB, groups by language, splits large languages into sub-batches, and saves each formatted batch to DynamoDB. Added `retrieve_batch_content_activity` to load individual batch content during the map phase.
+- **`src/workflows/investigate_single_repo_workflow.py`** — Added `_process_map_reduce_step()` method implementing the full map-reduce lifecycle (split → map → reduce). Modified `_process_analysis_steps()` to detect steps with `map_reduce` config and auto-delegate when `needs_batching=True`. Changed signature from `deps_formatted_content: str` to `deps_data: dict` for richer metadata. Added `INTER_BATCH_DELAY_SECONDS` module-level constant for rate limit mitigation between batch calls.
+- **`src/investigate_worker.py`** — Registered `create_dependency_batches_activity` and `retrieve_batch_content_activity` in the worker's activity list.
+- **`prompts/shared/dependencies_batch.md`** — New batch analysis prompt for individual dependency batches with `{batch_index}`, `{total_batches}`, `{batch_languages}` placeholders.
+- **`prompts/shared/dependencies_reduce.md`** — New synthesis prompt that combines batch analysis results into unified dependency documentation.
+- **`prompts/base_prompts.json`** — Added `map_reduce` configuration to the `dependencies` step referencing batch and reduce prompts.
+- **`src/investigator/core/claude_analyzer.py`** — Updated truncation warnings with `TRUNCATION FALLBACK` prefix for visibility.
+
+### Notes
+
+- Truncation is kept as a safety net — it guards against hard limits (gRPC 4MB, API 200K tokens) and should rarely trigger once map-reduce handles large repos.
+- Small repos (< 50K estimated tokens) are unaffected — they continue to use the existing single-pass flow.
+- For quarkus-scale repos (~38 batches), the dependencies step will make ~39 API calls (38 map + 1 reduce).
+
+---
+
 ## 2026-03-08 — Fix 4 investigation failures (rate limits, prompt overflow, gRPC payload, data_content bug)
 
 ### Problems

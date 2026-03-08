@@ -138,7 +138,8 @@ class ClaudeAnalyzer:
                 f"{len(repo_structure):,} characters to fit within {max_input:,} token limit] ..."
             )
             self.logger.warning(
-                f"Truncated repo_structure from {len(repo_structure):,} to {len(truncated):,} chars"
+                f"⚠️ TRUNCATION FALLBACK: repo_structure truncated from {len(repo_structure):,} to "
+                f"{len(truncated):,} chars. Consider adding map-reduce support for this step."
             )
             return template, truncated, previous_context
 
