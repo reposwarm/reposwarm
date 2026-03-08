@@ -102,7 +102,7 @@ class TestCodeCommitAuthentication:
 
             auth_url = manager._add_authentication(url)
 
-            assert auth_url == "https://github-token@github.com/user/repo"
+            assert auth_url == "https://x-access-token:github-token@github.com/user/repo"
             mock_logger.debug.assert_called_with("Added GitHub token authentication to repository URL")
 
     def test_add_authentication_existing_auth_not_overridden(self):
