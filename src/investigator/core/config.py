@@ -63,13 +63,61 @@ class Config:
     
     @staticmethod
     def get_arch_hub_repo_url() -> str:
-        """Get the full repository URL for the architecture hub."""
-        return f"{Config.ARCH_HUB_BASE_URL}/{Config.ARCH_HUB_REPO_NAME}.git"
-    
+        """Get the full repository URL for the architecture hub.
+
+        Smart URL construction:
+        - If ARCH_HUB_BASE_URL looks like a full repo URL (3+ path segments), use it directly
+        - If it looks like an org URL (2 path segments), append /{ARCH_HUB_REPO_NAME}
+        """
+        base_url = Config.ARCH_HUB_BASE_URL.rstrip('/')
+
+        # Parse the URL to count path segments
+        # Remove protocol if present
+        url_without_protocol = base_url.split('://', 1)[-1]
+        # Count path segments (everything after the host)
+        path_parts = url_without_protocol.split('/', 1)
+        if len(path_parts) > 1:
+            path_segments = [p for p in path_parts[1].split('/') if p]
+        else:
+            path_segments = []
+
+        # If 2+ path segments (e.g., github.com/org/repo), it's a full repo URL
+        if len(path_segments) >= 2:
+            # Use the base URL directly
+            if not base_url.endswith('.git'):
+                return f"{base_url}.git"
+            return base_url
+        else:
+            # It's an org URL (e.g., github.com/org), append repo name
+            return f"{base_url}/{Config.ARCH_HUB_REPO_NAME}.git"
+
     @staticmethod
     def get_arch_hub_web_url() -> str:
-        """Get the web URL for the architecture hub (without .git extension)."""
-        return f"{Config.ARCH_HUB_BASE_URL}/{Config.ARCH_HUB_REPO_NAME}"
+        """Get the web URL for the architecture hub (without .git extension).
+
+        Smart URL construction:
+        - If ARCH_HUB_BASE_URL looks like a full repo URL (3+ path segments), use it directly
+        - If it looks like an org URL (2 path segments), append /{ARCH_HUB_REPO_NAME}
+        """
+        base_url = Config.ARCH_HUB_BASE_URL.rstrip('/')
+
+        # Parse the URL to count path segments
+        # Remove protocol if present
+        url_without_protocol = base_url.split('://', 1)[-1]
+        # Count path segments (everything after the host)
+        path_parts = url_without_protocol.split('/', 1)
+        if len(path_parts) > 1:
+            path_segments = [p for p in path_parts[1].split('/') if p]
+        else:
+            path_segments = []
+
+        # If 2+ path segments (e.g., github.com/org/repo), it's a full repo URL
+        if len(path_segments) >= 2:
+            # Use the base URL directly, remove .git if present
+            return base_url.rstrip('.git').rstrip('/')
+        else:
+            # It's an org URL (e.g., github.com/org), append repo name
+            return f"{base_url}/{Config.ARCH_HUB_REPO_NAME}"
     
     @staticmethod
     def get_default_org_github_url() -> str:
