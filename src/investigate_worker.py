@@ -90,7 +90,9 @@ try:
     write_analysis_result_activity,
     cleanup_repository_activity,
     read_dependencies_activity,
-    cache_dependencies_activity
+    cache_dependencies_activity,
+    create_dependency_batches_activity,
+    retrieve_batch_content_activity
 )
     logger.info("  ✓ Imported investigate activities")
 except ImportError as e:
@@ -245,15 +247,31 @@ async def main():
             check_dynamodb_health,
             cleanup_old_health_checks,
             read_dependencies_activity,
-            cache_dependencies_activity
+            cache_dependencies_activity,
+            create_dependency_batches_activity,
+            retrieve_batch_content_activity
         ]
         logger.info(f"  Activities: {[a.__name__ for a in all_activities]}")
         
+        # Concurrency limits (managed by CLI via --parallel flag)
+        parallel = int(os.getenv('REPOSWARM_PARALLEL', '0'))
+        worker_kwargs = {}
+        if parallel > 0:
+            worker_kwargs['max_concurrent_activities'] = parallel
+            worker_kwargs['max_concurrent_workflow_task_polls'] = max(parallel, 2)
+            logger.info(f"  Concurrency limited to {parallel} (REPOSWARM_PARALLEL)")
+
+        # Newer Temporal SDK requires workflow_task_poller_behavior >= 2 when caching workflows
+        worker_kwargs['max_concurrent_workflow_task_polls'] = max(
+            worker_kwargs.get('max_concurrent_workflow_task_polls', 2), 2
+        )
+
         worker = Worker(
             client,
             task_queue=config['task_queue'],
             workflows=[InvestigateReposWorkflow, InvestigateSingleRepoWorkflow],
             activities=all_activities,
+            **worker_kwargs,
         )
         logger.info("✓ Worker instance created successfully!")
         

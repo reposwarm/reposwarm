@@ -11,7 +11,20 @@ class Config:
     # Claude API settings - read from env, with sensible defaults
     CLAUDE_MODEL = os.getenv('ANTHROPIC_MODEL') or os.getenv('CLAUDE_MODEL') or "claude-sonnet-4-6-20260120"
     MAX_TOKENS = int(os.getenv('MAX_TOKENS', '6000'))
-    
+
+    # Input token limits — truncate prompts that would exceed the context window
+    # 180K leaves room for output tokens within the 200K context window
+    MAX_INPUT_TOKENS = int(os.getenv('MAX_INPUT_TOKENS', '180000'))
+    CHARS_PER_TOKEN_ESTIMATE = float(os.getenv('CHARS_PER_TOKEN_ESTIMATE', '3.5'))
+
+    # Map-reduce batching for large analysis steps (e.g. dependencies)
+    # Token budget per batch — leave room for template + repo_structure in 180K window
+    BATCH_TOKEN_BUDGET = int(os.getenv('BATCH_TOKEN_BUDGET', '100000'))
+    # Minimum estimated tokens before batching kicks in (don't batch small deps)
+    MIN_TOKENS_FOR_BATCHING = int(os.getenv('MIN_TOKENS_FOR_BATCHING', '50000'))
+    # Delay between batch API calls to mitigate rate limits (seconds)
+    INTER_BATCH_DELAY_SECONDS = float(os.getenv('INTER_BATCH_DELAY_SECONDS', '2'))
+
     # Valid Claude model names for validation (4.x models only)
     # See: https://platform.claude.com/docs/en/about-claude/models/overview
     VALID_CLAUDE_MODELS = [

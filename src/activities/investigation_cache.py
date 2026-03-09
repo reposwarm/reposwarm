@@ -737,10 +737,10 @@ class InvestigationCache:
             self.logger.debug(f"   Reference key: {reference_key}")
             self.logger.debug(f"   TTL: {ttl_days} days ({ttl_minutes} minutes)")
             
-            # Save using the storage client's abstracted method
-            saved_item = self.storage_client.save_temporary_analysis_data(
+            # Save using the storage client's generic data method
+            saved_item = self.storage_client.save_generic_data(
                 reference_key=reference_key,
-                data_content=dependencies_data,
+                data=dependencies_data,
                 ttl_minutes=ttl_minutes
             )
             

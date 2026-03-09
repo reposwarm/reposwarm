@@ -439,9 +439,171 @@ class DynamoDBClient:
             logger.error(f"Error saving temporary analysis data to DynamoDB: {e}")
             raise
     
-    def _save_chunked_analysis_data(self, reference_key: str, prompt_content: str, 
+    def save_generic_data(self,
+                         reference_key: str,
+                         data: Any,
+                         ttl_minutes: int = 60) -> Dict[str, Any]:
+        """
+        Save arbitrary JSON-serializable data to DynamoDB with TTL.
+        Handles compression and chunking for large payloads.
+
+        Unlike save_temporary_analysis_data (which expects prompt_content/repo_structure),
+        this method stores any JSON-serializable data (dicts, lists, strings, etc.).
+
+        Args:
+            reference_key: Unique reference key for retrieval
+            data: Any JSON-serializable data (dict, list, str, etc.)
+            ttl_minutes: TTL in minutes (default 60)
+
+        Returns:
+            Dictionary with save status
+        """
+        try:
+            import gzip
+            import base64
+            import json
+
+            current_timestamp = int(datetime.now(timezone.utc).timestamp())
+            ttl_timestamp = current_timestamp + (ttl_minutes * 60)
+
+            # Serialize data to JSON
+            data_json = json.dumps(data)
+            data_size = len(data_json.encode('utf-8'))
+
+            logger.info(f"Saving generic data ({data_size} bytes) with key: {reference_key}")
+
+            if data_size > 300 * 1024:  # 300KB threshold
+                logger.info(f"Large generic data detected ({data_size} bytes), compressing...")
+
+                compressed_data = gzip.compress(data_json.encode('utf-8'))
+                compressed_b64 = base64.b64encode(compressed_data).decode('utf-8')
+                compressed_size = len(compressed_b64)
+
+                logger.info(f"Compressed from {data_size} to {compressed_size} bytes (ratio: {compressed_size/data_size:.2%})")
+
+                if compressed_size > 380 * 1024:
+                    # Use chunking for very large data
+                    return self._save_chunked_generic_data(
+                        reference_key, data_json, ttl_minutes,
+                        current_timestamp, ttl_timestamp
+                    )
+
+                # Save compressed
+                item = {
+                    'repository_name': f"_temp_{reference_key}",
+                    'analysis_timestamp': current_timestamp,
+                    'analysis_type': 'temporary_analysis_data',
+                    'reference_key': reference_key,
+                    'compressed_data': compressed_b64,
+                    'is_compressed': True,
+                    'is_generic': True,
+                    'original_size': data_size,
+                    'compressed_size': compressed_size,
+                    'ttl_timestamp': ttl_timestamp,
+                    'created_at': datetime.now(timezone.utc).isoformat()
+                }
+            else:
+                # Small enough to save as-is
+                item = {
+                    'repository_name': f"_temp_{reference_key}",
+                    'analysis_timestamp': current_timestamp,
+                    'analysis_type': 'temporary_analysis_data',
+                    'reference_key': reference_key,
+                    'generic_data': data_json,
+                    'is_compressed': False,
+                    'is_generic': True,
+                    'ttl_timestamp': ttl_timestamp,
+                    'created_at': datetime.now(timezone.utc).isoformat()
+                }
+
+            item = self._convert_floats_to_decimal(item)
+            self.table.put_item(Item=item)
+
+            logger.info(f"Saved generic data with reference key: {reference_key}")
+            return {
+                "status": "success",
+                "reference_key": reference_key,
+                "ttl_minutes": ttl_minutes,
+                "is_compressed": item.get('is_compressed', False)
+            }
+
+        except ClientError as e:
+            logger.error(f"Error saving generic data to DynamoDB: {e}")
+            raise
+
+    def _save_chunked_generic_data(self, reference_key: str, data_json: str,
+                                   ttl_minutes: int, current_timestamp: int,
+                                   ttl_timestamp: int) -> Dict[str, Any]:
+        """
+        Save generic data in chunks when it's too large even after compression.
+        """
+        import gzip
+        import base64
+
+        logger.info(f"Generic data too large even after compression, using chunking for: {reference_key}")
+
+        compressed_data = gzip.compress(data_json.encode('utf-8'))
+        compressed_b64 = base64.b64encode(compressed_data).decode('utf-8')
+
+        chunk_size = 350 * 1024
+        total_size = len(compressed_b64)
+        total_chunks = (total_size + chunk_size - 1) // chunk_size
+
+        logger.info(f"Splitting {total_size} bytes into {total_chunks} chunks")
+
+        try:
+            # Save metadata item
+            metadata_item = {
+                'repository_name': f"_temp_{reference_key}",
+                'analysis_timestamp': current_timestamp,
+                'analysis_type': 'temporary_analysis_data',
+                'reference_key': reference_key,
+                'is_chunked': True,
+                'is_generic': True,
+                'total_chunks': total_chunks,
+                'total_size': total_size,
+                'ttl_timestamp': ttl_timestamp,
+                'created_at': datetime.now(timezone.utc).isoformat()
+            }
+            metadata_item = self._convert_floats_to_decimal(metadata_item)
+            self.table.put_item(Item=metadata_item)
+
+            for i in range(total_chunks):
+                start_idx = i * chunk_size
+                end_idx = min((i + 1) * chunk_size, total_size)
+                chunk_data = compressed_b64[start_idx:end_idx]
+
+                chunk_item = {
+                    'repository_name': f"_temp_{reference_key}_chunk_{i}",
+                    'analysis_timestamp': current_timestamp,
+                    'analysis_type': 'temporary_analysis_chunk',
+                    'reference_key': reference_key,
+                    'chunk_index': i,
+                    'chunk_data': chunk_data,
+                    'ttl_timestamp': ttl_timestamp,
+                    'created_at': datetime.now(timezone.utc).isoformat()
+                }
+                chunk_item = self._convert_floats_to_decimal(chunk_item)
+                self.table.put_item(Item=chunk_item)
+
+                logger.debug(f"Saved generic chunk {i+1}/{total_chunks} for {reference_key}")
+
+            logger.info(f"Successfully saved {total_chunks} generic chunks for reference key: {reference_key}")
+            return {
+                "status": "success",
+                "reference_key": reference_key,
+                "ttl_minutes": ttl_minutes,
+                "is_chunked": True,
+                "total_chunks": total_chunks
+            }
+
+        except ClientError as e:
+            logger.error(f"Error saving chunked generic data to DynamoDB: {e}")
+            raise
+
+    def _save_chunked_analysis_data(self, reference_key: str, prompt_content: str,
                                    repo_structure: str, context: Optional[str],
-                                   ttl_minutes: int, current_timestamp: int, 
+                                   ttl_minutes: int, current_timestamp: int,
                                    ttl_timestamp: int) -> Dict[str, Any]:
         """
         Save analysis data in chunks when it's too large even after compression.
@@ -578,9 +740,10 @@ class DynamoDBClient:
             data = json.loads(decompressed_json)
             
             logger.info(f"Successfully retrieved and reassembled {total_chunks} chunks for {reference_key}")
-            data['reference_key'] = reference_key
+            if isinstance(data, dict):
+                data['reference_key'] = reference_key
             return data
-            
+
         except Exception as e:
             logger.error(f"Error retrieving chunked data from DynamoDB: {e}")
             return None
@@ -618,7 +781,7 @@ class DynamoDBClient:
                 
                 # Check if data is chunked
                 if item.get('is_chunked', False):
-                    return self._get_chunked_analysis_data(reference_key, item.get('total_chunks', 0))
+                    return self._get_chunked_analysis_data(reference_key, int(item.get('total_chunks', 0)))
                 
                 # Check if data is compressed
                 if item.get('is_compressed', False):
@@ -634,12 +797,26 @@ class DynamoDBClient:
                         data = json.loads(decompressed_json)
                         
                         logger.info(f"Retrieved and decompressed temporary analysis data for reference key: {reference_key}")
-                        data['reference_key'] = reference_key
+                        if isinstance(data, dict):
+                            data['reference_key'] = reference_key
                         return data
                     else:
                         logger.error(f"Compressed data flag set but no compressed_data found for: {reference_key}")
                         return None
                 
+                # Check if this is generic data (stored via save_generic_data)
+                if item.get('is_generic', False):
+                    import json
+                    generic_data = item.get('generic_data')
+                    if generic_data:
+                        data = json.loads(generic_data) if isinstance(generic_data, str) else generic_data
+                        if isinstance(data, dict):
+                            data['reference_key'] = reference_key
+                        return data
+                    else:
+                        logger.error(f"Generic data flag set but no generic_data found for: {reference_key}")
+                        return None
+
                 # Regular uncompressed data - convert and return
                 return self._convert_decimal_to_float(item)
             

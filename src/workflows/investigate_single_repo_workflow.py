@@ -6,13 +6,18 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from datetime import timedelta, datetime
 from typing import Dict, Optional
+import asyncio
 import logging
 import uuid
+
+# Read at module level to avoid Temporal sandbox restrictions on os.getenv inside workflows
+INTER_STEP_DELAY_SECONDS = float(os.getenv('INTER_STEP_DELAY_SECONDS', '0'))
+INTER_BATCH_DELAY_SECONDS = float(os.getenv('INTER_BATCH_DELAY_SECONDS', '2'))
 
 from activities.investigate_activities import (
     save_to_arch_hub,
     clone_repository_activity,
-    analyze_repository_structure_activity, 
+    analyze_repository_structure_activity,
     get_prompts_config_activity,
     read_prompt_file_activity,
     save_prompt_context_activity,
@@ -21,7 +26,9 @@ from activities.investigate_activities import (
     write_analysis_result_activity,
     cleanup_repository_activity,
     read_dependencies_activity,
-    cache_dependencies_activity
+    cache_dependencies_activity,
+    create_dependency_batches_activity,
+    retrieve_batch_content_activity
 )
 from activities.investigation_cache_activities import (
     check_if_repo_needs_investigation,
@@ -117,7 +124,7 @@ class InvestigateSingleRepoWorkflow:
         clone_result = await workflow.execute_activity(
             clone_repository_activity,
             args=[repo_url, repo_name],
-            start_to_close_timeout=timedelta(minutes=3),
+            start_to_close_timeout=timedelta(minutes=10),
             retry_policy=RetryPolicy(
                 maximum_attempts=3,
                 initial_interval=timedelta(seconds=5),
@@ -226,11 +233,12 @@ class InvestigateSingleRepoWorkflow:
         self._last_heartbeat = workflow.now()
         
         logger.info(f"Reading and caching dependencies for repository at: {repo_path}")
-        
-        # Read and format dependencies
+
+        # Read, format, and cache dependencies (caching now happens inside the activity
+        # to avoid sending large payloads through Temporal's gRPC which has a 4MB limit)
         deps_data = await workflow.execute_activity(
             read_dependencies_activity,
-            args=[repo_path],
+            args=[repo_path, self._repo_name],
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=RetryPolicy(
                 maximum_attempts=2,
@@ -238,21 +246,131 @@ class InvestigateSingleRepoWorkflow:
                 maximum_interval=timedelta(seconds=10),
             ),
         )
-        
+
         if deps_data["status"] != "success":
             logger.warning(f"Failed to read dependencies: {deps_data.get('message', 'Unknown error')}")
             return {
                 "deps_reference_key": None,
                 "formatted_content": "Error reading dependency files!"
             }
-        
-        logger.info(f"Dependencies read successfully: {deps_data['message']}")
-        
-        # Cache the dependencies data if we found any
-        if deps_data["raw_dependencies"]:
-            cache_result = await workflow.execute_activity(
-                cache_dependencies_activity,
-                args=[self._repo_name, deps_data["raw_dependencies"]],
+
+        deps_reference_key = deps_data.get("deps_reference_key")
+        logger.info(f"Dependencies read successfully: {deps_data['message']}"
+                     f"{f', cached with key: {deps_reference_key}' if deps_reference_key else ''}")
+
+        return {
+            "deps_reference_key": deps_reference_key,
+            "formatted_content": deps_data["formatted_content"],
+            "needs_batching": deps_data.get("needs_batching", False),
+            "total_tokens_estimate": deps_data.get("total_tokens_estimate", 0),
+        }
+
+    async def _process_map_reduce_step(self, step: dict, prompts_dir: str,
+                                       repo_structure: Dict, config_overrides: ConfigOverrides,
+                                       deps_data: dict, step_results: dict) -> str:
+        """
+        Process a step using map-reduce pattern for large datasets.
+
+        1. Create batches from the data source (split)
+        2. Analyze each batch with the batch prompt (map)
+        3. Synthesize all batch results with the reduce prompt (reduce)
+
+        Args:
+            step: Step configuration from base_prompts.json (includes map_reduce config)
+            prompts_dir: Directory containing prompt files
+            repo_structure: Repository structure dict
+            config_overrides: Claude config overrides
+            deps_data: Dependencies data dict (from _read_and_cache_dependencies)
+            step_results: Current step results dict for context chaining
+
+        Returns:
+            result_key for the final synthesized result
+        """
+        step_name = step.get("name", "unknown")
+        map_reduce_config = step["map_reduce"]
+        context_config = step.get("context", None)
+        deps_reference_key = deps_data.get("deps_reference_key")
+        latest_commit = getattr(self, '_latest_commit', None)
+
+        logger.info(f"🗺️ Starting map-reduce for step: {step_name}")
+
+        # === SPLIT PHASE ===
+        logger.info(f"📦 Split phase: creating batches from deps_reference_key={deps_reference_key}")
+        batches_result = await workflow.execute_activity(
+            create_dependency_batches_activity,
+            args=[deps_reference_key, self._repo_name],
+            start_to_close_timeout=timedelta(minutes=5),
+            retry_policy=RetryPolicy(
+                maximum_attempts=2,
+                initial_interval=timedelta(seconds=5),
+                maximum_interval=timedelta(seconds=30),
+            ),
+        )
+
+        if batches_result["status"] != "success":
+            raise Exception(f"Failed to create dependency batches: {batches_result.get('message')}")
+
+        batches = batches_result["batches"]
+        total_batches = batches_result["total_batches"]
+        logger.info(f"📦 Split phase complete: {total_batches} batches, {batches_result['total_files']} files")
+
+        # === MAP PHASE ===
+        logger.info(f"🗺️ Map phase: analyzing {total_batches} batches")
+        batch_result_keys = []
+
+        # Read the batch prompt template
+        batch_prompt_file = map_reduce_config["batch_prompt"]
+        batch_prompt_result = await workflow.execute_activity(
+            read_prompt_file_activity,
+            args=[prompts_dir, batch_prompt_file],
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=RetryPolicy(
+                maximum_attempts=2,
+                initial_interval=timedelta(seconds=1),
+                maximum_interval=timedelta(seconds=10),
+            ),
+        )
+
+        if batch_prompt_result["status"] == "not_found":
+            raise Exception(f"Batch prompt file not found: {batch_prompt_file}")
+
+        batch_prompt_template = batch_prompt_result["prompt_content"]
+        batch_prompt_version = batch_prompt_result.get("prompt_version", "1")
+
+        for batch_idx, batch_info in enumerate(batches):
+            batch_key = batch_info["key"]
+            batch_languages = batch_info["languages"]
+            batch_files = batch_info["files"]
+
+            logger.info(
+                f"🗺️ Map batch {batch_idx + 1}/{total_batches}: "
+                f"{batch_languages} ({batch_files} files, ~{batch_info['estimated_tokens']:,} tokens)"
+            )
+
+            # Customize the batch prompt with batch-specific placeholders
+            customized_prompt = batch_prompt_template
+            customized_prompt = customized_prompt.replace("{batch_index}", str(batch_idx + 1))
+            customized_prompt = customized_prompt.replace("{total_batches}", str(total_batches))
+            customized_prompt = customized_prompt.replace("{batch_languages}", batch_languages)
+
+            # Create context for this batch analysis
+            batch_step_name = f"{step_name}_batch_{batch_idx}"
+            batch_context_dict = {
+                "repo_name": self._repo_name,
+                "step_name": batch_step_name,
+                "prompt_version": batch_prompt_version,
+                "context_reference_keys": []
+            }
+
+            # Load the batch content from DynamoDB and inject as deps
+            # The batch content was saved as a string by create_dependency_batches_activity
+            # We pass it as deps_formatted_content so save_prompt_context_activity injects it
+            # into {repo_deps} placeholder
+
+            # Retrieve batch content from storage
+            batch_content_result = await workflow.execute_activity(
+                retrieve_batch_content_activity,
+                args=[batch_key],
                 start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=RetryPolicy(
                     maximum_attempts=2,
@@ -260,32 +378,186 @@ class InvestigateSingleRepoWorkflow:
                     maximum_interval=timedelta(seconds=10),
                 ),
             )
-            
-            if cache_result["status"] == "success":
-                logger.info(f"Dependencies cached successfully with key: {cache_result['deps_reference_key']}")
-                return {
-                    "deps_reference_key": cache_result["deps_reference_key"],
-                    "formatted_content": deps_data["formatted_content"]
-                }
-            else:
-                logger.warning(f"Failed to cache dependencies: {cache_result.get('error', 'Unknown error')}")
-        
-        # Return formatted content even if caching failed or no dependencies found
-        return {
-            "deps_reference_key": None,
-            "formatted_content": deps_data["formatted_content"]
+
+            if batch_content_result.get("status") != "success":
+                raise Exception(f"Failed to retrieve batch {batch_idx} content: {batch_content_result.get('message')}")
+
+            batch_content = batch_content_result["content"]
+
+            # Save batch prompt data
+            save_result = await workflow.execute_activity(
+                save_prompt_context_activity,
+                args=[batch_context_dict, customized_prompt, repo_structure, batch_content],
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=RetryPolicy(
+                    maximum_attempts=2,
+                    initial_interval=timedelta(seconds=1),
+                    maximum_interval=timedelta(seconds=10),
+                ),
+            )
+
+            if save_result["status"] != "success":
+                raise Exception(f"Failed to save batch {batch_idx} prompt context")
+
+            updated_context = save_result["context"]
+
+            # Execute Claude analysis for this batch
+            claude_input = AnalyzeWithClaudeInput(
+                context_dict=PromptContextDict(**updated_context),
+                config_overrides=ClaudeConfigOverrides(**config_overrides.model_dump()) if config_overrides else None,
+                latest_commit=latest_commit
+            )
+
+            claude_result = await workflow.execute_activity(
+                analyze_with_claude_context,
+                args=[claude_input],
+                start_to_close_timeout=timedelta(minutes=15),
+                retry_policy=RetryPolicy(
+                    maximum_attempts=6,
+                    initial_interval=timedelta(seconds=15),
+                    maximum_interval=timedelta(minutes=2),
+                    backoff_coefficient=2.0
+                ),
+            )
+
+            if claude_result.status != "success":
+                raise Exception(f"Map phase failed for batch {batch_idx}: {step_name}")
+
+            batch_result_context = claude_result.context.model_dump()
+            batch_result_key = batch_result_context["result_reference_key"]
+            batch_result_keys.append(batch_result_key)
+
+            logger.info(
+                f"🗺️ Map batch {batch_idx + 1}/{total_batches} complete "
+                f"(result_key: {batch_result_key}, {claude_result.result_length} chars)"
+            )
+
+            # Inter-batch delay to mitigate rate limits
+            if INTER_BATCH_DELAY_SECONDS > 0 and batch_idx < total_batches - 1:
+                logger.info(f"⏳ Rate limit mitigation: waiting {INTER_BATCH_DELAY_SECONDS}s before next batch")
+                await asyncio.sleep(INTER_BATCH_DELAY_SECONDS)
+
+        # === REDUCE PHASE ===
+        logger.info(f"🔄 Reduce phase: synthesizing {total_batches} batch results")
+
+        # Read the reduce prompt template
+        reduce_prompt_file = map_reduce_config["reduce_prompt"]
+        reduce_prompt_result = await workflow.execute_activity(
+            read_prompt_file_activity,
+            args=[prompts_dir, reduce_prompt_file],
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=RetryPolicy(
+                maximum_attempts=2,
+                initial_interval=timedelta(seconds=1),
+                maximum_interval=timedelta(seconds=10),
+            ),
+        )
+
+        if reduce_prompt_result["status"] == "not_found":
+            raise Exception(f"Reduce prompt file not found: {reduce_prompt_file}")
+
+        reduce_prompt_template = reduce_prompt_result["prompt_content"]
+        reduce_prompt_version = reduce_prompt_result.get("prompt_version", "1")
+
+        # Replace total_batches placeholder in reduce prompt
+        reduce_prompt_template = reduce_prompt_template.replace("{total_batches}", str(total_batches))
+
+        # Build context references: batch results + any step context (e.g. hl_overview)
+        reduce_context_keys = list(batch_result_keys)  # All batch results as context
+
+        # Add context from previous steps (e.g. hl_overview)
+        if context_config:
+            for context_step in context_config:
+                if isinstance(context_step, dict) and "val" in context_step:
+                    step_ref = context_step["val"]
+                else:
+                    step_ref = context_step
+                if step_ref and step_ref in step_results:
+                    result_key = step_results[step_ref]
+                    if result_key is not None:
+                        reduce_context_keys.append(result_key)
+
+        reduce_context_dict = {
+            "repo_name": self._repo_name,
+            "step_name": step_name,  # Use the original step name for the final result
+            "prompt_version": reduce_prompt_version,
+            "context_reference_keys": reduce_context_keys
         }
 
-    async def _process_analysis_steps(self, processing_order: list, prompts_dir: str, repo_structure: Dict, config_overrides: ConfigOverrides = None, deps_formatted_content: str = None) -> ProcessAnalysisResult:
-        """Process each analysis step using PromptContext for cleaner abstraction."""
+        # Save reduce prompt (no deps content — batch results are in context_reference_keys)
+        save_result = await workflow.execute_activity(
+            save_prompt_context_activity,
+            args=[reduce_context_dict, reduce_prompt_template, repo_structure, None],
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=RetryPolicy(
+                maximum_attempts=2,
+                initial_interval=timedelta(seconds=1),
+                maximum_interval=timedelta(seconds=10),
+            ),
+        )
+
+        if save_result["status"] != "success":
+            raise Exception(f"Failed to save reduce prompt context for {step_name}")
+
+        updated_context = save_result["context"]
+
+        # Execute Claude synthesis
+        claude_input = AnalyzeWithClaudeInput(
+            context_dict=PromptContextDict(**updated_context),
+            config_overrides=ClaudeConfigOverrides(**config_overrides.model_dump()) if config_overrides else None,
+            latest_commit=latest_commit
+        )
+
+        claude_result = await workflow.execute_activity(
+            analyze_with_claude_context,
+            args=[claude_input],
+            start_to_close_timeout=timedelta(minutes=15),
+            retry_policy=RetryPolicy(
+                maximum_attempts=6,
+                initial_interval=timedelta(seconds=15),
+                maximum_interval=timedelta(minutes=2),
+                backoff_coefficient=2.0
+            ),
+        )
+
+        if claude_result.status != "success":
+            raise Exception(f"Reduce phase failed for step {step_name}")
+
+        result_context = claude_result.context.model_dump()
+        result_key = result_context["result_reference_key"]
+
+        logger.info(
+            f"🔄 Reduce phase complete for {step_name} "
+            f"(result_key: {result_key}, {claude_result.result_length} chars, "
+            f"{total_batches} batches synthesized)"
+        )
+
+        return result_key
+
+    async def _process_analysis_steps(self, processing_order: list, prompts_dir: str, repo_structure: Dict, config_overrides: ConfigOverrides = None, deps_data: dict = None) -> ProcessAnalysisResult:
+        """Process each analysis step using PromptContext for cleaner abstraction.
+
+        Args:
+            processing_order: List of step configurations from base_prompts.json
+            prompts_dir: Directory containing prompt files
+            repo_structure: Repository structure dict
+            config_overrides: Optional Claude config overrides
+            deps_data: Dependencies data dict from _read_and_cache_dependencies,
+                       containing formatted_content, needs_batching, deps_reference_key, etc.
+        """
         if config_overrides is None:
             config_overrides = ConfigOverrides()
+        if deps_data is None:
+            deps_data = {}
+
+        # Extract formatted content for single-pass steps (backward compat)
+        deps_formatted_content = deps_data.get("formatted_content")
 
         self._current_step = 7
         self._step_name = "analyzing"
         self._status = "analyzing"
         self._last_heartbeat = workflow.now()
-        
+
         # Initialize the results collector with base prompts config
         # Load base prompts config for validation
         import json
@@ -297,23 +569,60 @@ class InvestigateSingleRepoWorkflow:
         except Exception as e:
             logger.warning(f"Could not load base prompts config: {e}")
             base_prompts_config = None
-        
+
         results_collector = AnalysisResultsCollector(self._repo_name, base_prompts_config)
-        
+
         # Track step results for building context
         step_results = {}  # Maps step names to result reference keys
         all_result_info = []   # Stores metadata about results
         cached_steps = 0
-        
+
         for step in processing_order:
             step_name = step.get("name", "unknown")
             file_name = step.get("file", "")
             is_required = True
             description = step.get("description", "")
             context_config = step.get("context", None)
-            
+
             logger.info(f"Processing step: {step_name} - {description}")
-            
+
+            # Check if this step needs map-reduce
+            map_reduce_config = step.get("map_reduce")
+            if map_reduce_config and deps_data.get("needs_batching"):
+                logger.info(
+                    f"🗺️ Step {step_name} will use map-reduce "
+                    f"(~{deps_data.get('total_tokens_estimate', 0):,} tokens exceeds batching threshold)"
+                )
+                result_key = await self._process_map_reduce_step(
+                    step, prompts_dir, repo_structure, config_overrides,
+                    deps_data, step_results
+                )
+
+                # Track the result
+                step_results[step_name] = result_key
+                all_result_info.append({
+                    "name": step_name,
+                    "description": description,
+                    "result_key": result_key,
+                    "result_length": 0  # Length unknown from map-reduce
+                })
+                results_collector.track_step(
+                    step_name=step_name,
+                    description=description,
+                    result_key=result_key,
+                    required=is_required,
+                    context_dependencies=[ctx.get("val") for ctx in context_config or [] if isinstance(ctx, dict) and "val" in ctx]
+                )
+                logger.info(f"Step {step_name} completed via map-reduce with result key: {result_key}")
+
+                # Optional inter-step delay
+                if INTER_STEP_DELAY_SECONDS > 0:
+                    logger.info(f"⏳ Rate limit mitigation: waiting {INTER_STEP_DELAY_SECONDS}s before next step")
+                    await asyncio.sleep(INTER_STEP_DELAY_SECONDS)
+                continue
+
+            # --- Standard single-pass flow ---
+
             # Read the prompt file
             prompt_result = await workflow.execute_activity(
                 read_prompt_file_activity,
@@ -325,7 +634,7 @@ class InvestigateSingleRepoWorkflow:
                     maximum_interval=timedelta(seconds=10),
                 ),
             )
-            
+
             if prompt_result["status"] == "not_found":
                 if is_required:
                     logger.error(f"Required prompt file not found: {file_name}")
@@ -333,10 +642,10 @@ class InvestigateSingleRepoWorkflow:
                 else:
                     logger.warning(f"Optional prompt file not found, skipping: {file_name}")
                     continue
-            
+
             prompt_content = prompt_result["prompt_content"]
             prompt_version = prompt_result.get("prompt_version", "1")
-            
+
             # Create PromptContext for this step with proper context references
             context_dict = {
                 "repo_name": self._repo_name,
@@ -344,7 +653,7 @@ class InvestigateSingleRepoWorkflow:
                 "prompt_version": prompt_version,
                 "context_reference_keys": []
             }
-            
+
             # Add context references from previous steps
             if context_config:
                 for context_step in context_config:
@@ -353,7 +662,7 @@ class InvestigateSingleRepoWorkflow:
                         step_ref = context_step["val"]
                     else:
                         step_ref = context_step
-                    
+
                     if step_ref and step_ref in step_results:
                         result_key = step_results[step_ref]
                         # Only add non-None result keys
@@ -361,7 +670,7 @@ class InvestigateSingleRepoWorkflow:
                             context_dict["context_reference_keys"].append(result_key)
                         else:
                             logger.warning(f"Step {step_ref} has None result key, skipping from context")
-            
+
             # Save prompt data to DynamoDB using PromptContext
             logger.info(f"Saving prompt data for step: {step_name}")
             save_result = await workflow.execute_activity(
@@ -374,49 +683,49 @@ class InvestigateSingleRepoWorkflow:
                     maximum_interval=timedelta(seconds=10),
                 ),
             )
-            
+
             if save_result["status"] != "success":
                 raise Exception(f"Failed to save prompt context for step {step_name}")
-            
+
             # Get updated context with data reference key
             updated_context = save_result["context"]
-            
+
             # Execute Claude analysis using PromptContext with prompt-level caching
             logger.info(f"Calling Claude for step: {step_name}")
             # Get latest_commit from workflow state (passed from parent)
             latest_commit = getattr(self, '_latest_commit', None)
-            
+
             # Create Pydantic input model
             claude_input = AnalyzeWithClaudeInput(
                 context_dict=PromptContextDict(**updated_context),
                 config_overrides=ClaudeConfigOverrides(**config_overrides.model_dump()) if config_overrides else None,
                 latest_commit=latest_commit
             )
-            
+
             claude_result = await workflow.execute_activity(
                 analyze_with_claude_context,
                 args=[claude_input],
                 start_to_close_timeout=timedelta(minutes=15),
                 retry_policy=RetryPolicy(
-                    maximum_attempts=3,
-                    initial_interval=timedelta(seconds=5),
-                    maximum_interval=timedelta(seconds=30),
+                    maximum_attempts=6,
+                    initial_interval=timedelta(seconds=15),
+                    maximum_interval=timedelta(minutes=2),
                     backoff_coefficient=2.0
                 ),
             )
-            
+
             if claude_result.status != "success":
                 raise Exception(f"Claude analysis failed for step {step_name}")
-            
+
             # Log if result was from cache
             if claude_result.cached:
                 logger.info(f"✅ Used cached result for step {step_name}: {claude_result.cache_reason or 'Unknown reason'}")
                 cached_steps += 1
-            
+
             # Get the result context with result key
             result_context = claude_result.context.model_dump()
             result_key = result_context["result_reference_key"]
-            
+
             # Store result key for future context use
             step_results[step_name] = result_key
             all_result_info.append({
@@ -425,7 +734,7 @@ class InvestigateSingleRepoWorkflow:
                 "result_key": result_key,
                 "result_length": claude_result.result_length
             })
-            
+
             # Track the step in the results collector
             results_collector.track_step(
                 step_name=step_name,
@@ -434,9 +743,14 @@ class InvestigateSingleRepoWorkflow:
                 required=is_required,
                 context_dependencies=[ctx.get("val") for ctx in context_config or [] if isinstance(ctx, dict) and "val" in ctx]
             )
-            
+
             logger.info(f"Step {step_name} completed with result key: {result_key}")
-        
+
+            # Optional inter-step delay to mitigate API rate limits
+            if INTER_STEP_DELAY_SECONDS > 0:
+                logger.info(f"⏳ Rate limit mitigation: waiting {INTER_STEP_DELAY_SECONDS}s before next step")
+                await asyncio.sleep(INTER_STEP_DELAY_SECONDS)
+
         # Retrieve all results from DynamoDB for final processing
         logger.info(f"Retrieving all {len(step_results)} results from DynamoDB")
         
@@ -739,16 +1053,22 @@ class InvestigateSingleRepoWorkflow:
         # Step 3.5: Read and cache dependencies
         deps_result = await self._read_and_cache_dependencies(repo_path)
         deps_reference_key = deps_result.get("deps_reference_key")
-        deps_formatted_content = deps_result.get("formatted_content")
-        
+
+        if deps_result.get("needs_batching"):
+            logger.info(
+                f"📦 Dependencies will use map-reduce batching "
+                f"(~{deps_result.get('total_tokens_estimate', 0):,} estimated tokens)"
+            )
+
         # Step 4: Reuse prompts configuration (already loaded for cache check)
         logger.info(f"📝 WORKFLOW: Reusing prompts configuration loaded earlier")
         prompts_result = early_prompts_result  # Reuse the configuration loaded before cache check
         prompts_dir = prompts_result.prompts_dir
         processing_order = prompts_result.processing_order
-        
+
         # Step 5: Process each analysis step as separate activities
-        analysis_result = await self._process_analysis_steps(processing_order, prompts_dir, repo_structure, config_overrides, deps_formatted_content)
+        # Pass full deps_result dict so map-reduce can access needs_batching, deps_reference_key, etc.
+        analysis_result = await self._process_analysis_steps(processing_order, prompts_dir, repo_structure, config_overrides, deps_data=deps_result)
         step_results = analysis_result.step_results
         all_results = analysis_result.all_results
         
