@@ -1640,15 +1640,18 @@ async def write_analysis_result_activity(temp_dir: str, repo_path: str, final_an
 
 
 @activity.defn
-async def read_dependencies_activity(repo_path: str) -> dict:
+async def read_dependencies_activity(repo_path: str, repo_name: str = None) -> dict:
     """
     Activity to read and format all dependency files from a repository.
-    
+    Raw dependencies are saved to external storage (DynamoDB) to avoid
+    exceeding Temporal's 4MB gRPC message size limit.
+
     Args:
         repo_path: Path to the cloned repository
-        
+        repo_name: Repository name (for storage key generation)
+
     Returns:
-        Dictionary with formatted dependency content ready for prompt inclusion
+        Dictionary with formatted dependency content and a reference key
     """
     activity.logger.info(f"Reading dependency files from: {repo_path}")
     
@@ -1850,20 +1853,61 @@ async def read_dependencies_activity(repo_path: str) -> dict:
         else:
             message = f"Found dependency files in {len(dependencies_by_language)} languages ({total_files} files total)"
             activity.logger.info(message)
-        
+
+        # Save raw dependencies to external storage to avoid gRPC size limits
+        deps_reference_key = None
+        if dependencies_by_language and repo_name:
+            try:
+                if os.environ.get('PROMPT_CONTEXT_STORAGE') == 'file':
+                    from utils.prompt_context import create_prompt_context_manager
+                    storage_client = create_prompt_context_manager(repo_name)
+                else:
+                    from utils.dynamodb_client import get_dynamodb_client
+                    storage_client = get_dynamodb_client()
+
+                from utils.storage_keys import KeyNameCreator
+                deps_key = KeyNameCreator.create_dependencies_key(repo_name)
+                deps_reference_key = deps_key.to_storage_key()
+
+                storage_client.save_generic_data(
+                    reference_key=deps_reference_key,
+                    data=dependencies_by_language,
+                    ttl_minutes=120
+                )
+                activity.logger.info(f"Saved raw dependencies to storage with key: {deps_reference_key}")
+            except Exception as storage_err:
+                activity.logger.warning(f"Failed to save raw dependencies to storage: {storage_err}")
+                deps_reference_key = None
+
+        # Truncate formatted_content if too large for gRPC (4MB limit)
+        # Use 500KB — full deps are saved externally, this is just for the prompt
+        MAX_FORMATTED_BYTES = 500 * 1024  # 500KB to stay well within gRPC limit
+        if len(formatted_content.encode('utf-8')) > MAX_FORMATTED_BYTES:
+            original_len = len(formatted_content)
+            formatted_content = formatted_content[:MAX_FORMATTED_BYTES]
+            formatted_content += (
+                f"\n\n... [TRUNCATED: showing first {MAX_FORMATTED_BYTES:,} bytes of "
+                f"{original_len:,} characters to fit within gRPC message size limit] ..."
+            )
+            activity.logger.warning(
+                f"Truncated formatted_content from {original_len:,} chars to fit within gRPC limit"
+            )
+
         return {
             "status": "success",
             "formatted_content": formatted_content,
-            "raw_dependencies": dependencies_by_language,
+            "raw_dependencies": {},  # Empty to avoid gRPC size limit
+            "deps_reference_key": deps_reference_key,
             "message": message
         }
-        
+
     except Exception as e:
         activity.logger.error(f"Failed to read dependencies: {str(e)}")
         return {
             "status": "error",
             "formatted_content": "Error reading dependency files!",
             "raw_dependencies": {},
+            "deps_reference_key": None,
             "message": f"Error: {str(e)}"
         }
 

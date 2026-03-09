@@ -249,11 +249,20 @@ async def main():
         ]
         logger.info(f"  Activities: {[a.__name__ for a in all_activities]}")
         
+        # Concurrency limits (managed by CLI via --parallel flag)
+        parallel = int(os.getenv('REPOSWARM_PARALLEL', '0'))
+        worker_kwargs = {}
+        if parallel > 0:
+            worker_kwargs['max_concurrent_activities'] = parallel
+            worker_kwargs['max_concurrent_workflow_task_polls'] = parallel
+            logger.info(f"  Concurrency limited to {parallel} (REPOSWARM_PARALLEL)")
+
         worker = Worker(
             client,
             task_queue=config['task_queue'],
             workflows=[InvestigateReposWorkflow, InvestigateSingleRepoWorkflow],
             activities=all_activities,
+            **worker_kwargs,
         )
         logger.info("✓ Worker instance created successfully!")
         
