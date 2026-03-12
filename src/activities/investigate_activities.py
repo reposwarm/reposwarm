@@ -618,6 +618,18 @@ async def save_to_arch_hub(arch_files: list) -> dict:
             pass
         return await _save_to_arch_hub_local(arch_files)
     
+    # Skip if arch-hub is not configured (still using default placeholder URL)
+    if Config.ARCH_HUB_BASE_URL in ("https://github.com/your-org", ""):
+        activity.logger.warning("Architecture hub not configured — skipping save. "
+                              "Set up with: reposwarm config arch-hub local <path> "
+                              "or: reposwarm config arch-hub github --url <url>")
+        return {
+            "status": "skipped",
+            "message": "Architecture hub not configured (ARCH_HUB_BASE_URL is default placeholder). "
+                       "Configure with: reposwarm config arch-hub local <path>",
+            "files_saved": []
+        }
+    
     activity.logger.info(f"Starting to save architecture files to {Config.ARCH_HUB_REPO_NAME}")
     try:
         activity.heartbeat("start:save_to_arch_hub")

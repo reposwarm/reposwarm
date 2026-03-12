@@ -16,11 +16,14 @@ mock_activity.logger = MagicMock()
 mock_activity.heartbeat = MagicMock()
 mock_activity.defn = lambda f: f  # passthrough decorator
 
-sys.modules['temporalio'] = MagicMock()
+mock_temporalio = MagicMock()
+mock_temporalio.activity = mock_activity
+
+sys.modules['temporalio'] = mock_temporalio
 sys.modules['temporalio.activity'] = mock_activity
 
 
-from activities.investigate_activities import _save_to_arch_hub_local
+from activities.investigate_activities import _save_to_arch_hub_local, save_to_arch_hub
 
 
 PATCH_TARGET = "investigator.core.config.Config"
@@ -158,3 +161,43 @@ class TestSaveToArchHubLocal:
             assert result["status"] == "success"
             assert os.path.isdir(new_path)
             assert os.path.isfile(os.path.join(new_path, "my-app.arch.md"))
+
+
+class TestSaveToArchHubSkipUnconfigured:
+    """Tests for skipping arch-hub save when not configured."""
+
+    @pytest.mark.asyncio
+    async def test_skips_when_default_placeholder_url(self):
+        """Test that save is skipped when ARCH_HUB_BASE_URL is the default placeholder."""
+        with patch(f"{PATCH_TARGET}.ARCH_HUB_MODE", "git"), \
+             patch(f"{PATCH_TARGET}.ARCH_HUB_BASE_URL", "https://github.com/your-org"):
+
+            result = await save_to_arch_hub([{"repo_name": "test", "arch_file_content": "content"}])
+
+        assert result["status"] == "skipped"
+        assert "not configured" in result["message"]
+        assert result["files_saved"] == []
+
+    @pytest.mark.asyncio
+    async def test_skips_when_empty_base_url(self):
+        """Test that save is skipped when ARCH_HUB_BASE_URL is empty."""
+        with patch(f"{PATCH_TARGET}.ARCH_HUB_MODE", "git"), \
+             patch(f"{PATCH_TARGET}.ARCH_HUB_BASE_URL", ""):
+
+            result = await save_to_arch_hub([{"repo_name": "test", "arch_file_content": "content"}])
+
+        assert result["status"] == "skipped"
+        assert "not configured" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_dispatches_to_local_mode(self):
+        """Test that local mode is dispatched correctly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch(f"{PATCH_TARGET}.ARCH_HUB_MODE", "local"), \
+                 patch(f"{PATCH_TARGET}.ARCH_HUB_LOCAL_PATH", tmpdir), \
+                 patch(f"{PATCH_TARGET}.ARCH_HUB_FILES_DIR", ""):
+
+                result = await save_to_arch_hub([{"repo_name": "test", "arch_file_content": "content"}])
+
+            assert result["status"] == "success"
+            assert os.path.isfile(os.path.join(tmpdir, "test.arch.md"))
