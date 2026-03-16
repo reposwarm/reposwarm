@@ -1708,15 +1708,18 @@ async def write_analysis_result_activity(temp_dir: str, repo_path: str, final_an
 
 
 @activity.defn
-async def read_dependencies_activity(repo_path: str) -> dict:
+async def read_dependencies_activity(repo_path: str, repo_name: str = None) -> dict:
     """
     Activity to read and format all dependency files from a repository.
-    
+    Raw dependencies are saved to external storage (DynamoDB) to avoid
+    exceeding Temporal's 4MB gRPC message size limit.
+
     Args:
         repo_path: Path to the cloned repository
-        
+        repo_name: Repository name (for storage key generation)
+
     Returns:
-        Dictionary with formatted dependency content ready for prompt inclusion
+        Dictionary with formatted dependency content and a reference key
     """
     activity.logger.info(f"Reading dependency files from: {repo_path}")
     
@@ -1918,20 +1921,337 @@ async def read_dependencies_activity(repo_path: str) -> dict:
         else:
             message = f"Found dependency files in {len(dependencies_by_language)} languages ({total_files} files total)"
             activity.logger.info(message)
-        
+
+        # Save raw dependencies to external storage to avoid gRPC size limits
+        deps_reference_key = None
+        if dependencies_by_language and repo_name:
+            try:
+                if os.environ.get('PROMPT_CONTEXT_STORAGE') == 'file':
+                    from utils.prompt_context import create_prompt_context_manager
+                    storage_client = create_prompt_context_manager(repo_name)
+                else:
+                    from utils.dynamodb_client import get_dynamodb_client
+                    storage_client = get_dynamodb_client()
+
+                from utils.storage_keys import KeyNameCreator
+                deps_key = KeyNameCreator.create_dependencies_key(repo_name)
+                deps_reference_key = deps_key.to_storage_key()
+
+                storage_client.save_generic_data(
+                    reference_key=deps_reference_key,
+                    data=dependencies_by_language,
+                    ttl_minutes=120
+                )
+                activity.logger.info(f"Saved raw dependencies to storage with key: {deps_reference_key}")
+            except Exception as storage_err:
+                activity.logger.warning(f"Failed to save raw dependencies to storage: {storage_err}")
+                deps_reference_key = None
+
+        # Estimate tokens for batching decision
+        from investigator.core.config import Config
+        total_tokens_estimate = int(len(formatted_content) / Config.CHARS_PER_TOKEN_ESTIMATE)
+        needs_batching = total_tokens_estimate > Config.MIN_TOKENS_FOR_BATCHING
+
+        if needs_batching:
+            activity.logger.info(
+                f"Dependencies need batching: {total_tokens_estimate:,} estimated tokens "
+                f"> {Config.MIN_TOKENS_FOR_BATCHING:,} threshold ({total_files} files)"
+            )
+        else:
+            activity.logger.info(
+                f"Dependencies fit in single pass: {total_tokens_estimate:,} estimated tokens "
+                f"<= {Config.MIN_TOKENS_FOR_BATCHING:,} threshold"
+            )
+
+        # Truncate formatted_content if too large for gRPC (4MB limit)
+        # Use 500KB — full deps are saved externally, this is just for the prompt
+        MAX_FORMATTED_BYTES = 500 * 1024  # 500KB to stay well within gRPC limit
+        if len(formatted_content.encode('utf-8')) > MAX_FORMATTED_BYTES:
+            original_len = len(formatted_content)
+            formatted_content = formatted_content[:MAX_FORMATTED_BYTES]
+            formatted_content += (
+                f"\n\n... [TRUNCATED: showing first {MAX_FORMATTED_BYTES:,} bytes of "
+                f"{original_len:,} characters to fit within gRPC message size limit] ..."
+            )
+            activity.logger.warning(
+                f"⚠️ TRUNCATION FALLBACK: formatted_content truncated from {original_len:,} chars. "
+                f"Map-reduce batching will handle full analysis if enabled."
+            )
+
         return {
             "status": "success",
             "formatted_content": formatted_content,
-            "raw_dependencies": dependencies_by_language,
+            "raw_dependencies": {},  # Empty to avoid gRPC size limit
+            "deps_reference_key": deps_reference_key,
+            "needs_batching": needs_batching,
+            "total_tokens_estimate": total_tokens_estimate,
             "message": message
         }
-        
+
     except Exception as e:
         activity.logger.error(f"Failed to read dependencies: {str(e)}")
         return {
             "status": "error",
             "formatted_content": "Error reading dependency files!",
             "raw_dependencies": {},
+            "deps_reference_key": None,
+            "needs_batching": False,
+            "total_tokens_estimate": 0,
+            "message": f"Error: {str(e)}"
+        }
+
+
+@activity.defn
+async def create_dependency_batches_activity(deps_reference_key: str, repo_name: str) -> dict:
+    """
+    Load raw dependencies from DynamoDB and split into token-budget-sized batches.
+    Each batch is formatted and saved to DynamoDB with indexed keys.
+
+    This is the 'split' phase of the map-reduce pattern for large dependency sets.
+
+    Args:
+        deps_reference_key: DynamoDB key containing the raw dependencies data
+        repo_name: Repository name for key generation
+
+    Returns:
+        Dictionary with batch metadata:
+        {
+            "status": "success",
+            "batches": [
+                {"key": "...", "languages": "Java", "files": 500, "estimated_tokens": 95000},
+                ...
+            ],
+            "total_batches": N,
+            "total_files": M
+        }
+    """
+    activity.logger.info(f"Creating dependency batches for {repo_name} from key: {deps_reference_key}")
+
+    try:
+        from investigator.core.config import Config
+
+        # Load raw dependencies from DynamoDB
+        if os.environ.get('PROMPT_CONTEXT_STORAGE') == 'file':
+            from utils.prompt_context import create_prompt_context_manager
+            storage_client = create_prompt_context_manager(repo_name)
+        else:
+            from utils.dynamodb_client import get_dynamodb_client
+            storage_client = get_dynamodb_client()
+
+        raw_deps = storage_client.get_temporary_analysis_data(deps_reference_key)
+        if not raw_deps:
+            activity.logger.error(f"No raw dependencies found for key: {deps_reference_key}")
+            return {
+                "status": "error",
+                "batches": [],
+                "total_batches": 0,
+                "total_files": 0,
+                "message": f"No dependencies found for key: {deps_reference_key}"
+            }
+
+        # Remove the reference_key that get_temporary_analysis_data adds
+        raw_deps.pop('reference_key', None)
+
+        # Build batches by language, splitting large languages if needed
+        batches = []
+        batch_token_budget = Config.BATCH_TOKEN_BUDGET
+        total_files = 0
+
+        for language in sorted(raw_deps.keys()):
+            lang_data = raw_deps[language]
+            prod_deps = lang_data.get("production_dependencies", [])
+            dev_deps = lang_data.get("developer_only_dependencies", [])
+            lang_files = len(prod_deps) + len(dev_deps)
+            total_files += lang_files
+
+            # Format the entire language to estimate tokens
+            lang_formatted = _format_dependencies_for_prompt({language: lang_data})
+            lang_tokens = int(len(lang_formatted) / Config.CHARS_PER_TOKEN_ESTIMATE)
+
+            if lang_tokens <= batch_token_budget:
+                # Language fits in one batch
+                batches.append({
+                    "languages": language,
+                    "files": lang_files,
+                    "estimated_tokens": lang_tokens,
+                    "formatted_content": lang_formatted
+                })
+                activity.logger.info(
+                    f"Batch {len(batches)}: {language} ({lang_files} files, ~{lang_tokens:,} tokens) — single batch"
+                )
+            else:
+                # Language exceeds budget — split its files into sub-batches
+                activity.logger.info(
+                    f"{language} exceeds batch budget ({lang_tokens:,} > {batch_token_budget:,} tokens). "
+                    f"Splitting {lang_files} files into sub-batches."
+                )
+                all_files = []
+                for dep in prod_deps:
+                    all_files.append(("production_dependencies", dep))
+                for dep in dev_deps:
+                    all_files.append(("developer_only_dependencies", dep))
+
+                current_batch_files = {"production_dependencies": [], "developer_only_dependencies": []}
+                current_batch_tokens = 0
+
+                for dep_type, dep_file in all_files:
+                    # Estimate tokens for this single file
+                    file_text = f"**File:** `{dep_file['full_path']}`\n```\n{dep_file['content']}\n```\n"
+                    file_tokens = int(len(file_text) / Config.CHARS_PER_TOKEN_ESTIMATE)
+
+                    if current_batch_tokens + file_tokens > batch_token_budget and (
+                        current_batch_files["production_dependencies"] or
+                        current_batch_files["developer_only_dependencies"]
+                    ):
+                        # Flush current batch
+                        batch_data = {language: current_batch_files}
+                        batch_formatted = _format_dependencies_for_prompt(batch_data)
+                        batch_file_count = (len(current_batch_files["production_dependencies"]) +
+                                          len(current_batch_files["developer_only_dependencies"]))
+                        batches.append({
+                            "languages": language,
+                            "files": batch_file_count,
+                            "estimated_tokens": current_batch_tokens,
+                            "formatted_content": batch_formatted
+                        })
+                        activity.logger.info(
+                            f"Batch {len(batches)}: {language} sub-batch ({batch_file_count} files, "
+                            f"~{current_batch_tokens:,} tokens)"
+                        )
+                        current_batch_files = {"production_dependencies": [], "developer_only_dependencies": []}
+                        current_batch_tokens = 0
+
+                    current_batch_files[dep_type].append(dep_file)
+                    current_batch_tokens += file_tokens
+
+                # Flush remaining files
+                if (current_batch_files["production_dependencies"] or
+                    current_batch_files["developer_only_dependencies"]):
+                    batch_data = {language: current_batch_files}
+                    batch_formatted = _format_dependencies_for_prompt(batch_data)
+                    batch_file_count = (len(current_batch_files["production_dependencies"]) +
+                                      len(current_batch_files["developer_only_dependencies"]))
+                    batches.append({
+                        "languages": language,
+                        "files": batch_file_count,
+                        "estimated_tokens": current_batch_tokens,
+                        "formatted_content": batch_formatted
+                    })
+                    activity.logger.info(
+                        f"Batch {len(batches)}: {language} sub-batch ({batch_file_count} files, "
+                        f"~{current_batch_tokens:,} tokens)"
+                    )
+
+        # Save each batch's formatted content to DynamoDB and collect metadata
+        batch_metadata = []
+        for idx, batch in enumerate(batches):
+            batch_key = f"_result_deps_batch_{repo_name}_{idx}"
+            try:
+                storage_client.save_generic_data(
+                    reference_key=batch_key,
+                    data=batch["formatted_content"],
+                    ttl_minutes=120
+                )
+                batch_metadata.append({
+                    "key": batch_key,
+                    "index": idx,
+                    "languages": batch["languages"],
+                    "files": batch["files"],
+                    "estimated_tokens": batch["estimated_tokens"]
+                })
+            except Exception as save_err:
+                activity.logger.error(f"Failed to save batch {idx}: {save_err}")
+                return {
+                    "status": "error",
+                    "batches": [],
+                    "total_batches": 0,
+                    "total_files": 0,
+                    "message": f"Failed to save batch {idx}: {save_err}"
+                }
+
+        activity.logger.info(
+            f"Created {len(batch_metadata)} dependency batches for {repo_name} "
+            f"covering {total_files} files"
+        )
+
+        return {
+            "status": "success",
+            "batches": batch_metadata,
+            "total_batches": len(batch_metadata),
+            "total_files": total_files,
+            "message": f"Created {len(batch_metadata)} batches from {total_files} dependency files"
+        }
+
+    except Exception as e:
+        activity.logger.error(f"Failed to create dependency batches: {str(e)}")
+        return {
+            "status": "error",
+            "batches": [],
+            "total_batches": 0,
+            "total_files": 0,
+            "message": f"Error: {str(e)}"
+        }
+
+
+@activity.defn
+async def retrieve_batch_content_activity(batch_key: str) -> dict:
+    """
+    Retrieve a single batch's formatted content from DynamoDB.
+
+    Used during the map phase of map-reduce to load each batch's
+    dependency text for injection into the batch analysis prompt.
+
+    Args:
+        batch_key: DynamoDB key for the batch content
+
+    Returns:
+        {"status": "success", "content": "..."} or error dict
+    """
+    activity.logger.info(f"Retrieving batch content for key: {batch_key}")
+
+    try:
+        if os.environ.get('PROMPT_CONTEXT_STORAGE') == 'file':
+            from utils.prompt_context import create_prompt_context_manager
+            storage_client = create_prompt_context_manager("batch")
+        else:
+            from utils.dynamodb_client import get_dynamodb_client
+            storage_client = get_dynamodb_client()
+
+        data = storage_client.get_temporary_analysis_data(batch_key)
+        if data is None:
+            activity.logger.error(f"No batch content found for key: {batch_key}")
+            return {
+                "status": "error",
+                "content": "",
+                "message": f"No batch content found for key: {batch_key}"
+            }
+
+        # Data could be a string (formatted deps text) wrapped in JSON
+        # or a dict with reference_key added by get_temporary_analysis_data
+        if isinstance(data, dict):
+            # get_temporary_analysis_data adds 'reference_key' — remove it
+            data.pop('reference_key', None)
+            # If it's a dict with a single string value, that's our content
+            # But save_generic_data stores strings as JSON strings,
+            # so json.loads returns the string directly
+            content = str(data) if data else ""
+        elif isinstance(data, str):
+            content = data
+        else:
+            content = str(data)
+
+        activity.logger.info(f"Retrieved batch content: {len(content):,} chars")
+        return {
+            "status": "success",
+            "content": content,
+            "message": f"Retrieved {len(content):,} chars"
+        }
+
+    except Exception as e:
+        activity.logger.error(f"Failed to retrieve batch content: {str(e)}")
+        return {
+            "status": "error",
+            "content": "",
             "message": f"Error: {str(e)}"
         }
 
