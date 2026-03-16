@@ -6,8 +6,12 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from datetime import timedelta, datetime
 from typing import Dict, Optional
+import asyncio
 import logging
 import uuid
+
+# Read at module level to avoid Temporal sandbox restrictions on os.getenv inside workflows
+INTER_STEP_DELAY_SECONDS = float(os.getenv('INTER_STEP_DELAY_SECONDS', '0'))
 
 from activities.investigate_activities import (
     save_to_arch_hub,
@@ -226,11 +230,12 @@ class InvestigateSingleRepoWorkflow:
         self._last_heartbeat = workflow.now()
         
         logger.info(f"Reading and caching dependencies for repository at: {repo_path}")
-        
-        # Read and format dependencies
+
+        # Read, format, and cache dependencies (caching now happens inside the activity
+        # to avoid sending large payloads through Temporal's gRPC which has a 4MB limit)
         deps_data = await workflow.execute_activity(
             read_dependencies_activity,
-            args=[repo_path],
+            args=[repo_path, self._repo_name],
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=RetryPolicy(
                 maximum_attempts=2,
@@ -238,41 +243,20 @@ class InvestigateSingleRepoWorkflow:
                 maximum_interval=timedelta(seconds=10),
             ),
         )
-        
+
         if deps_data["status"] != "success":
             logger.warning(f"Failed to read dependencies: {deps_data.get('message', 'Unknown error')}")
             return {
                 "deps_reference_key": None,
                 "formatted_content": "Error reading dependency files!"
             }
-        
-        logger.info(f"Dependencies read successfully: {deps_data['message']}")
-        
-        # Cache the dependencies data if we found any
-        if deps_data["raw_dependencies"]:
-            cache_result = await workflow.execute_activity(
-                cache_dependencies_activity,
-                args=[self._repo_name, deps_data["raw_dependencies"]],
-                start_to_close_timeout=timedelta(minutes=2),
-                retry_policy=RetryPolicy(
-                    maximum_attempts=2,
-                    initial_interval=timedelta(seconds=2),
-                    maximum_interval=timedelta(seconds=10),
-                ),
-            )
-            
-            if cache_result["status"] == "success":
-                logger.info(f"Dependencies cached successfully with key: {cache_result['deps_reference_key']}")
-                return {
-                    "deps_reference_key": cache_result["deps_reference_key"],
-                    "formatted_content": deps_data["formatted_content"]
-                }
-            else:
-                logger.warning(f"Failed to cache dependencies: {cache_result.get('error', 'Unknown error')}")
-        
-        # Return formatted content even if caching failed or no dependencies found
+
+        deps_reference_key = deps_data.get("deps_reference_key")
+        logger.info(f"Dependencies read successfully: {deps_data['message']}"
+                     f"{f', cached with key: {deps_reference_key}' if deps_reference_key else ''}")
+
         return {
-            "deps_reference_key": None,
+            "deps_reference_key": deps_reference_key,
             "formatted_content": deps_data["formatted_content"]
         }
 
@@ -398,9 +382,9 @@ class InvestigateSingleRepoWorkflow:
                 args=[claude_input],
                 start_to_close_timeout=timedelta(minutes=15),
                 retry_policy=RetryPolicy(
-                    maximum_attempts=3,
-                    initial_interval=timedelta(seconds=5),
-                    maximum_interval=timedelta(seconds=30),
+                    maximum_attempts=6,
+                    initial_interval=timedelta(seconds=15),
+                    maximum_interval=timedelta(minutes=2),
                     backoff_coefficient=2.0
                 ),
             )
@@ -436,7 +420,12 @@ class InvestigateSingleRepoWorkflow:
             )
             
             logger.info(f"Step {step_name} completed with result key: {result_key}")
-        
+
+            # Optional inter-step delay to mitigate API rate limits
+            if INTER_STEP_DELAY_SECONDS > 0:
+                logger.info(f"⏳ Rate limit mitigation: waiting {INTER_STEP_DELAY_SECONDS}s before next step")
+                await asyncio.sleep(INTER_STEP_DELAY_SECONDS)
+
         # Retrieve all results from DynamoDB for final processing
         logger.info(f"Retrieving all {len(step_results)} results from DynamoDB")
         
