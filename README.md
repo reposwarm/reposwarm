@@ -161,7 +161,7 @@ reposwarm config git setup             # Interactive (GitHub, GitLab, CodeCommit
 ```bash
 reposwarm repos add my-backend --url https://github.com/org/my-backend
 reposwarm repos add my-frontend --url https://github.com/org/my-frontend
-reposwarm repos discover               # Auto-discover from CodeCommit
+reposwarm repos discover               # Auto-discover from your configured git provider (GitHub, GitLab, CodeCommit, Azure DevOps, Bitbucket)
 ```
 
 Or edit `prompts/repos.json` directly:
@@ -280,6 +280,34 @@ RepoSwarm was born out of a hackathon at [Verbit](https://verbit.ai/), built by:
 **Symptom:** On fresh EC2 instances or machines without IAM roles or `~/.aws/credentials`, the API and worker containers fail because the AWS SDK tries to resolve credentials via IMDS and hangs.
 
 **Fix:** Added dummy `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` defaults to API, worker, and UI services in the Docker Compose template. DynamoDB Local accepts any credentials.
+
+### 2026-03-24
+
+#### 🔧 UI: Repos added via CLI now visible in dashboard
+
+**Symptom:** Repos added with `reposwarm repos add` appeared in the CLI but not in the web UI on Docker installs.
+
+**Root cause:** The UI container had no way to reach the API container — `/v1/*` requests from the browser were hitting the UI's own Next.js server, which had no route for them.
+
+**Fix:** Added Next.js rewrites to proxy `/v1/*` requests from the UI container to the API container. Repos added via CLI now appear immediately in the dashboard.
+
+**Update:** `docker compose pull ui && docker compose up -d ui`
+
+#### 🔧 CLI: `doctor` correctly detects provider credentials on Docker installs
+
+**Symptom:** `reposwarm doctor` reported `ANTHROPIC_API_KEY — NOT SET` even when the key was correctly configured in `worker.env`.
+
+**Root cause:** On Docker installs, `doctor` was querying the API container for environment variable status. The API container doesn't have access to `worker.env` — only the worker container does. So the key always appeared missing.
+
+**Fix:** `reposwarm doctor` now reads `worker.env` directly from the local filesystem instead of querying the API container.
+
+**Update:** `curl -fsSL https://raw.githubusercontent.com/reposwarm/reposwarm-cli/main/install.sh | sh`
+
+#### 🔧 UI: Auto-Discover is now provider-agnostic
+
+**Symptom:** The "Auto-Discover from CodeCommit" button implied discovery only worked with AWS CodeCommit.
+
+**Fix:** Button text updated to "Auto-Discover". Discovery works with GitHub, GitLab, Azure DevOps, Bitbucket, and CodeCommit based on your configured git provider. Multi-provider auto-discovery across all supported git providers is coming imminently.
 
 ---
 
