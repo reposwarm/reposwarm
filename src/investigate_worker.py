@@ -139,11 +139,17 @@ def health_check_thread():
 
 def get_temporal_config():
     """Get Temporal configuration from environment variables."""
+    # Build a unique worker identity using hostname and PID
+    # This allows multiple workers (via docker compose --scale) to be
+    # distinguishable in Temporal's worker list for debugging.
+    import socket
+    default_identity = f"investigate-worker-{socket.gethostname()}-{os.getpid()}"
+    
     config = {
         'server_url': os.getenv('TEMPORAL_SERVER_URL', 'localhost:7233'),
         'namespace': os.getenv('TEMPORAL_NAMESPACE', 'default'),
         'task_queue': os.getenv('TEMPORAL_TASK_QUEUE', 'investigate-task-queue'),
-        'identity': os.getenv('TEMPORAL_IDENTITY', 'investigate-worker'),
+        'identity': os.getenv('TEMPORAL_IDENTITY', default_identity),
         'api_key': os.getenv('TEMPORAL_API_KEY'),  # Get API key from environment
     }
     
