@@ -796,8 +796,15 @@ async def save_to_arch_hub(arch_files: list) -> dict:
             except Exception:
                 pass
             
+            # Detect the current branch (not always "main")
+            current_branch = git_manager.get_current_branch(repo_dir)
+            if current_branch == "HEAD":  # detached or empty repo
+                subprocess.run(["git", "checkout", "-b", "main"], cwd=repo_dir, check=True)
+                current_branch = "main"
+            activity.logger.info(f"Pushing to branch: {current_branch}")
+
             # Push changes using GitRepositoryManager
-            push_result = git_manager.push_with_authentication(repo_dir, "main")
+            push_result = git_manager.push_with_authentication(repo_dir, current_branch)
             
             if push_result["status"] != "success":
                 raise Exception(push_result["message"])

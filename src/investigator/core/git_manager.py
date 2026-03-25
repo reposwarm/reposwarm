@@ -559,6 +559,27 @@ class GitRepositoryManager:
         except subprocess.TimeoutExpired:
             raise Exception("Minimal clone timed out after 10 minutes")
     
+    def get_current_branch(self, repo_dir: str) -> str:
+        """Get the current branch name of a git repository.
+
+        Args:
+            repo_dir: Directory containing the git repository
+
+        Returns:
+            The current branch name, or "main" as fallback if the command fails.
+            Returns "HEAD" for detached HEAD state.
+        """
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+        # Fallback for detached HEAD or empty repo
+        return "main"
+
     def push_with_authentication(self, repo_dir: str, branch: str = "main") -> dict:
         """
         Push changes to remote repository with proper authentication (GitHub or CodeCommit).
