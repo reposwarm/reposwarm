@@ -5,7 +5,7 @@ Git repository management for the Claude Investigator.
 import os
 import shutil
 import subprocess
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse, quote
 from .utils import Utils
 
 
@@ -214,8 +214,8 @@ class GitRepositoryManager:
                 self.logger.warning("CodeCommit URL detected but credentials not available")
                 return repo_location
 
-            # Add CodeCommit HTTPS Git credentials
-            auth_netloc = f"{self.codecommit_username}:{self.codecommit_password}@{parsed.hostname}"
+            # Add CodeCommit HTTPS Git credentials (URL-encode to handle special chars like / in password)
+            auth_netloc = f"{quote(self.codecommit_username, safe='')}:{quote(self.codecommit_password, safe='')}@{parsed.hostname}"
             if parsed.port:
                 auth_netloc += f":{parsed.port}"
 
