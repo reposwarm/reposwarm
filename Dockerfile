@@ -16,11 +16,22 @@ RUN apt-get update \
 # Create a non-root user and working directory
 RUN useradd --create-home --shell /bin/bash app \
     && mkdir -p /app && chown app:app /app
-USER app
+COPY ./scripts/cloudflare_ca.crt /usr/local/share/ca-certificates/cloudflare_ca.crt
+RUN apt-get install -y ca-certificates \
+    && update-ca-certificates
+# Install uv as root so every layer sees it on the default PATH. Installing
+# as `app` to ~/.local/bin can break later RUNs under buildx (uv: not found).
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && if ! command -v uv >/dev/null 2>&1; then \
+         if [ -x /root/.local/bin/uv ]; then \
+           install -m 0755 /root/.local/bin/uv /usr/local/bin/uv; \
+         else \
+           echo "uv not found after install" >&2; exit 1; \
+         fi; \
+       fi \
+    && uv --version
 
-# Install uv for fast Python package management
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/home/app/.local/bin:$PATH"
+USER app
 
 # Set the working directory
 WORKDIR /app

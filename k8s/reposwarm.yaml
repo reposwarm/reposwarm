@@ -1,0 +1,539 @@
+# Reposwarm on EKS (namespace: reposwarm)
+# -----------------------------------------------------------------------------
+# Prerequisites (you manage these outside the cluster):
+# 1) RDS PostgreSQL: create databases the Temporal auto-setup user can use
+#    (defaults: temporal, temporal_visibility on same instance). If RDS
+#    requires SSL, you may need extra SQL/TLS options for the Temporal server
+#    — see: https://docs.temporal.io/clusters/self-hosted-guide
+# 2) IAM: DynamoDB + any other permissions for api / worker / ui. Attach
+#    the same role to the service account below (IRSA) — do not use
+#    long‑lived access keys in manifests.
+# 3) EFS (or other ReadWriteMany storage) if api, worker, and ui must share
+#    /data. Set storageClassName in the PVC to your EFS StorageClass, or
+#    adjust accessModes and replicas if a single RWO volume perDeployment is
+#    enough.
+# 4) Create reposwarm-secrets (see block below) before or after the rest of the
+#    manifest. Do not commit rds-password or api-bearer-token; pass them with
+#    the command or with env vars as shown.
+# 5) Optional: imagePullSecrets for ghcr.io if your images are private.
+# 6) HPA for worker: needs metrics-server (EKS: verify `kubectl get apiservice
+#    v1beta1.metrics.k8s.io` is Available).
+# -----------------------------------------------------------------------------
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: reposwarm
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: reposwarm-app
+  namespace: reposwarm
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::219277046067:role/tf-reposwarm-ap-southeast-2
+
+# --- Secret: create out-of-band (not in this file so the password is never
+#     committed, and so kubectl apply does not overwrite a live Secret).
+#     Prerequisite: namespace reposwarm exists
+#     (kubectl create namespace reposwarm, or apply this file once for Namespace).
+#
+#   export RDS_PASSWORD='(your RDS password)'
+#   export API_BEARER_TOKEN='(your API bearer token)'
+#   export GITHUB_TOKEN='(PAT: repo read for private GitHub clones; omit for public-only)'
+#
+#   kubectl -n reposwarm create secret generic reposwarm-secrets \
+#     --from-literal=rds-endpoint=tf-reposwarm-develop-db.cvyyldv81ex3.ap-southeast-2.rds.amazonaws.com \
+#     --from-literal=rds-user=reposwarm \
+#     --from-literal=rds-password="${RDS_PASSWORD}" \
+#     --from-literal=api-bearer-token="${API_BEARER_TOKEN}" \
+#     --from-literal=github-token="${GITHUB_TOKEN}"
+#
+#   (If the secret already exists, add `github-token` by merging keys you need —
+#   do not apply a partial create that drops rds-*/api-bearer-* keys. E.g. export
+#   the same rds-*/user/password/api values and re-run create+delete+create, or
+#   add the key with your secrets tool / SOPS. Repo catalog: use
+#   `reposwarm repos add` (API / DynamoDB), not a ConfigMap in this stack.
+#
+#   To change the password or token later (replace whole secret):
+#   kubectl -n reposwarm delete secret reposwarm-secrets
+#   then run the same create again with new values.
+# -----------------------------------------------------------------------------
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: reposwarm-config
+  namespace: reposwarm
+data:
+  AWS_REGION: "ap-southeast-2"
+  DYNAMODB_TABLE: "reposwarm"
+  TEMPORAL_NAMESPACE: "default"
+  TEMPORAL_TASK_QUEUE: "investigate-task-queue"
+  # Omit DYNAMODB_ENDPOINT in production to use the regional AWS endpoint.
+  # UI uses a different var name in compose:
+  # DYNAMODB_TABLE / DYNAMODB_CACHE_TABLE
+
+---
+# Worker: Bedrock / Claude + architecture hub (mirrors worker.env for local docker).
+# Do not put AWS access keys here — the ServiceAccount uses IRSA; the IAM role
+# must allow bedrock:InvokeModel (and related) plus DynamoDB as needed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: reposwarm-worker-llm
+  namespace: reposwarm
+data:
+  ANTHROPIC_DEFAULT_HAIKU_MODEL: "au.anthropic.claude-haiku-4-5-20251001-v1:0"
+  ANTHROPIC_DEFAULT_OPUS_MODEL: "au.anthropic.claude-opus-4-6-v1"
+  ANTHROPIC_DEFAULT_SONNET_MODEL: "au.anthropic.claude-sonnet-4-5-20250929-v1:0"
+  ANTHROPIC_MODEL: "au.anthropic.claude-sonnet-4-5-20250929-v1:0"
+  ANTHROPIC_SMALL_FAST_MODEL: "au.anthropic.claude-haiku-4-5-20251001-v1:0"
+  ARCH_HUB_BASE_URL: "https://github.com/Nirovision"
+  ARCH_HUB_REPO_NAME: "aware-architecture-hub"
+  AWS_DEFAULT_REGION: "ap-southeast-2"
+  CLAUDE_CODE_USE_BEDROCK: "1"
+  CLAUDE_PROVIDER: "bedrock"
+  REPOSWARM_INSTALL_DIR: "/data"
+
+---
+# Shared application data (mirrors docker-compose `config-data`).
+# Requires a StorageClass that supports ReadWriteMany (EFS) if api + worker + ui
+# must mount the same volume. Otherwise use a single app or separate volumes.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: reposwarm-config-pvc
+  namespace: reposwarm
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: efs # replace with your EFS / RWX class name
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal
+  namespace: reposwarm
+spec:
+  selector:
+    app: temporal
+  ports:
+    - name: grpc
+      port: 7233
+      targetPort: 7233
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-ui
+  namespace: reposwarm
+spec:
+  selector:
+    app: temporal-ui
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: reposwarm
+spec:
+  selector:
+    app: api
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui
+  namespace: reposwarm
+spec:
+  selector:
+    app: ui
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal
+  namespace: reposwarm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: temporal
+  template:
+    metadata:
+      labels:
+        app: temporal
+    spec:
+      # Auto-setup must reach RDS; ensure security groups + subnets allow the EKS node/pod ENIs.
+      containers:
+        - name: temporal
+          image: temporalio/auto-setup:latest
+          ports:
+            - containerPort: 7233
+              name: grpc
+          env:
+            - name: DB
+              value: postgres12
+            - name: DB_PORT
+              value: "5432"
+            - name: POSTGRES_SEEDS
+              valueFrom:
+                secretKeyRef:
+                  name: reposwarm-secrets
+                  key: rds-endpoint
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: reposwarm-secrets
+                  key: rds-user
+            - name: POSTGRES_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: reposwarm-secrets
+                  key: rds-password
+            - name: DYNAMIC_CONFIG_FILE_PATH
+              value: config/dynamicconfig/docker.yaml
+            - name: SKIP_DEFAULT_NAMESPACE_CREATION
+              value: "false"
+            # -- temporal-sql-tool (auto-setup.sh): schema creation to RDS
+            - name: POSTGRES_TLS_ENABLED
+              value: "true"
+            - name: POSTGRES_TLS_DISABLE_HOST_VERIFICATION
+              value: "true"
+            # -- temporal-server config (docker config_template.yaml): connection pool
+            - name: SQL_TLS_ENABLED
+              value: "true"
+            - name: SQL_HOST_VERIFICATION
+              value: "false"
+            # Tighten later: SQL_CA + SQL_HOST_VERIFICATION "true" with RDS cert
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          startupProbe:
+            tcpSocket:
+              port: 7233
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            tcpSocket:
+              port: 7233
+            initialDelaySeconds: 30
+            periodSeconds: 20
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-ui
+  namespace: reposwarm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: temporal-ui
+  template:
+    metadata:
+      labels:
+        app: temporal-ui
+    spec:
+      # Without this, kubelet injects TEMPORAL_UI_PORT=tcp://... for Service
+      # "temporal-ui" and the Temporal image treats TEMPORAL_UI_PORT as a plain
+      # port number, breaking config/docker.yaml (line: port) with unmarshal errors.
+      enableServiceLinks: false
+      containers:
+        - name: temporal-ui
+          image: temporalio/ui:latest
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: TEMPORAL_UI_PORT
+              value: "8080"
+            - name: TEMPORAL_ADDRESS
+              value: temporal:7233
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: reposwarm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      serviceAccountName: reposwarm-app
+      containers:
+        - name: api
+          image: ghcr.io/reposwarm/api:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+            - name: API_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: reposwarm-secrets
+                  key: api-bearer-token
+            - name: TEMPORAL_SERVER_URL
+              value: temporal:7233
+            - name: TEMPORAL_HTTP_URL
+              value: http://temporal-ui:8080
+            - name: TEMPORAL_NAMESPACE
+              valueFrom:
+                configMapKeyRef:
+                  name: reposwarm-config
+                  key: TEMPORAL_NAMESPACE
+            - name: AWS_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: reposwarm-config
+                  key: AWS_REGION
+            - name: DYNAMODB_TABLE
+              valueFrom:
+                configMapKeyRef:
+                  name: reposwarm-config
+                  key: DYNAMODB_TABLE
+            - name: REPOSWARM_INSTALL_DIR
+              value: /data
+            # No DYNAMODB_ENDPOINT → use AWS managed DynamoDB in the given region
+          volumeMounts:
+            - name: config-data
+              mountPath: /data
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: 3000
+
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: config-data
+          persistentVolumeClaim:
+            claimName: reposwarm-config-pvc
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: reposwarm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      serviceAccountName: reposwarm-app
+      containers:
+        - name: worker
+          image: 219277046067.dkr.ecr.ap-southeast-2.amazonaws.com/chen-test-cve:reposwarm-latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: reposwarm-worker-llm
+          env:
+            - name: TEMPORAL_SERVER_URL
+              value: temporal:7233
+            - name: REPO_ANALYZER_TREE_MAX_DEPTH
+              value: '10'
+            # Cap full user message to avoid 400 "input too long" (tune with REPO_* below)
+            - name: CLAUDE_MAX_INPUT_CHARS
+              value: "500000"
+            - name: REPO_ANALYZER_MAX_TOTAL_KB
+              value: "384"
+            - name: REPO_ANALYZER_MAX_FILES
+              value: "80"
+            - name: TEMPORAL_NAMESPACE
+              valueFrom:
+                configMapKeyRef:
+                  name: reposwarm-config
+                  key: TEMPORAL_NAMESPACE
+            - name: TEMPORAL_TASK_QUEUE
+              valueFrom:
+                configMapKeyRef:
+                  name: reposwarm-config
+                  key: TEMPORAL_TASK_QUEUE
+            - name: AWS_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: reposwarm-config
+                  key: AWS_REGION
+            - name: DYNAMODB_TABLE
+              valueFrom:
+                configMapKeyRef:
+                  name: reposwarm-config
+                  key: DYNAMODB_TABLE
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: reposwarm-secrets
+                  key: github-token
+                  optional: true
+            # No LOCAL_TESTING, no DYNAMODB_ENDPOINT, no host networking; AWS
+            # credentials from IRSA (not static keys like local docker worker.env).
+          volumeMounts:
+            - name: config-data
+              mountPath: /data
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+              ephemeral-storage: "1Gi"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+              ephemeral-storage: "4Gi"
+      volumes:
+        - name: config-data
+          persistentVolumeClaim:
+            claimName: reposwarm-config-pvc
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ui
+  namespace: reposwarm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ui
+  template:
+    metadata:
+      labels:
+        app: ui
+    spec:
+      serviceAccountName: reposwarm-app
+      containers:
+        - name: ui
+          image: ghcr.io/reposwarm/ui:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: TEMPORAL_SERVER_URL
+              value: http://temporal-ui:8080
+            - name: AWS_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: reposwarm-config
+                  key: AWS_REGION
+            - name: DYNAMODB_CACHE_TABLE
+              valueFrom:
+                configMapKeyRef:
+                  name: reposwarm-config
+                  key: DYNAMODB_TABLE
+            - name: API_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: reposwarm-secrets
+                  key: api-bearer-token
+            - name: REPOSWARM_API_URL
+              value: http://api:3000
+            # Next.js must listen on 0.0.0.0 (not only the pod name from $HOSTNAME) or
+            # port-forward to 127.0.0.1:3000 and cluster probes to loopback will fail.
+            - name: HOSTNAME
+              value: "0.0.0.0"
+            # No DYNAMODB_ENDPOINT → use AWS DynamoDB
+          volumeMounts:
+            - name: config-data
+              mountPath: /data
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "200m"
+      volumes:
+        - name: config-data
+          persistentVolumeClaim:
+            claimName: reposwarm-config-pvc
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    alb.ingress.kubernetes.io/group.name: internet-facing-private
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+  labels:
+    app: reposwarm-ui
+    app.kubernetes.io/name: reposwarm-ui
+  name: reposwarm-ui
+  namespace: reposwarm
+spec:
+  ingressClassName: internet-facing-private
+  rules:
+  - host: reposwarm.dev.nirovision.com
+    http:
+      paths:
+      - backend:
+          service:
+            name: ui
+            port:
+              number: 3000
+        path: /
+        pathType: Prefix

@@ -331,6 +331,12 @@ docker-build-args = "docker build --no-cache --build-arg GITHUB_TOKEN=${GITHUB_T
 # Use when: deploying to AWS, managing production secrets, or configuring cloud infrastructure
 deploy-secrets = "scripts/secretset.sh"
 
+# Build and deploy RepoSwarm worker to EKS
+# Logs into ECR, builds/pushes multi-arch image, then applies k8s manifest
+# Usage: mise deploy-reposwarm [build|deploy|all]
+# Use when: deploying updated worker image to dev EKS
+deploy-reposwarm = "scripts/deploy.sh $@"
+
 # Debug Temporal server connection
 # Checks if Temporal server is running and accessible on localhost:7233
 # Use when: debugging connection issues between Docker containers and Temporal server

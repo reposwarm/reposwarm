@@ -11,6 +11,10 @@ class Config:
     # Claude API settings - read from env, with sensible defaults
     CLAUDE_MODEL = os.getenv('ANTHROPIC_MODEL') or os.getenv('CLAUDE_MODEL') or "claude-sonnet-4-6-20260120"
     MAX_TOKENS = int(os.getenv('MAX_TOKENS', '6000'))
+    # Max characters for the full user message (all steps). Prevents 400 "input too long".
+    # Default ~500k chars is a balanced fit for Bedrock Claude 4.5 Sonnet (~200k input tokens, rough).
+    # 0 = no cap. Lower in env if your route still returns 400; raise only if the API allows it.
+    CLAUDE_MAX_INPUT_CHARS = int(os.getenv("CLAUDE_MAX_INPUT_CHARS", "500000"))
     
     # Valid Claude model names for validation (4.x models only)
     # See: https://platform.claude.com/docs/en/about-claude/models/overview
@@ -62,6 +66,22 @@ class Config:
     # Git configuration for commits
     GIT_USER_NAME = os.getenv("GIT_USER_NAME", "Architecture Bot")
     GIT_USER_EMAIL = os.getenv("GIT_USER_EMAIL", "architecture-bot@your-org.com")
+    
+    # Verbatim source bundled into {repo_structure} for analysis (not path-only).
+    # Defaults pair with CLAUDE_MAX_INPUT_CHARS; lower in env if you hit size limits.
+    REPO_ANALYZER_MAX_FILE_BYTES = int(os.getenv("REPO_ANALYZER_MAX_FILE_KB", "64")) * 1024
+    REPO_ANALYZER_MAX_TOTAL_BYTES = int(os.getenv("REPO_ANALYZER_MAX_TOTAL_KB", "384")) * 1024
+    REPO_ANALYZER_MAX_FILES = int(os.getenv("REPO_ANALYZER_MAX_FILES", "80"))
+    # Shallow tree lines at the top of the bundle (0 = skip layout, content only)
+    REPO_ANALYZER_LAYOUT_MAX_DEPTH = int(os.getenv("REPO_ANALYZER_LAYOUT_MAX_DEPTH", "2"))
+    # Max directory depth for path-only tree (get_structure fallback and layout section)
+    REPO_ANALYZER_TREE_MAX_DEPTH = int(os.getenv("REPO_ANALYZER_TREE_MAX_DEPTH", "3"))
+    # "0" = disable verbatim files and fall back to path-only tree (old behavior)
+    REPO_ANALYZER_CONTENT_ENABLED = os.getenv("REPO_ANALYZER_CONTENT_ENABLED", "1").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     
     @staticmethod
     def get_arch_hub_repo_url() -> str:

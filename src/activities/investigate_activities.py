@@ -4,6 +4,7 @@ import sys
 import json
 import asyncio
 import subprocess
+from pathlib import Path
 from typing import Optional
 
 # Import Pydantic models for type safety
@@ -872,29 +873,28 @@ async def save_prompt_context_activity(context_dict: dict,
         # Create PromptContext from dictionary using factory
         context = create_prompt_context_from_dict(context_dict)
         
-        # Check if prompt needs dependencies and replace placeholder
+        # Every analysis step receives dependency/config excerpts: replace placeholder
+        # or append so the model is not limited to a directory tree only (see gh issue #29).
         if deps_formatted_content:
-            # Define dependency keywords to check for
-            DEPENDENCY_KEYWORDS = [
-                'dependencies', 'packages', 'requirements', 'libraries',
-                'npm', 'pip', 'gem', 'cargo', 'maven', 'gradle', 'nuget',
-                'pyproject', 'package.json', 'gemfile', '{repo_deps}'
-            ]
-            
-            # Check if prompt contains dependency keywords
-            needs_deps = any(keyword.lower() in prompt_content.lower() for keyword in DEPENDENCY_KEYWORDS)
-            
-            if needs_deps:
-                activity.logger.info(f"Prompt contains dependency keywords - including dependencies")
-                # Replace the placeholder with formatted dependencies
-                prompt_content = prompt_content.replace('{repo_deps}', deps_formatted_content)
+            if "{repo_deps}" in prompt_content:
+                activity.logger.info("Injecting dependency and config excerpts ({repo_deps} placeholder)")
+                prompt_content = prompt_content.replace("{repo_deps}", deps_formatted_content)
             else:
-                activity.logger.debug(f"Prompt does not contain dependency keywords - skipping dependencies")
+                activity.logger.info(
+                    "Appending dependency and config excerpts (no {repo_deps} in template)"
+                )
+                prompt_content = (
+                    prompt_content
+                    + "\n\n---\n\n## Dependency and configuration file contents (verbatim)\n\n"
+                    + deps_formatted_content
+                )
         else:
-            # Replace with "not found" message if prompt expects dependencies
-            if '{repo_deps}' in prompt_content:
-                activity.logger.info(f"Prompt expects dependencies but none were provided")
-                prompt_content = prompt_content.replace('{repo_deps}', 'No dependency files found!')
+            if "{repo_deps}" in prompt_content:
+                activity.logger.info("No dependency excerpts to inject; using placeholder text")
+                prompt_content = prompt_content.replace(
+                    "{repo_deps}",
+                    "No dependency or configuration file excerpts were collected for this repository.",
+                )
         
         # Save the prompt data
         data_key = context.save_prompt_data(prompt_content, repo_structure)
@@ -1742,7 +1742,6 @@ async def read_dependencies_activity(repo_path: str) -> dict:
         import os
         import glob
         import json
-        from pathlib import Path
         
         # Define dependency file patterns
         DEPENDENCY_PATTERNS = {
@@ -1804,7 +1803,8 @@ async def read_dependencies_activity(repo_path: str) -> dict:
         
         repo_path_obj = Path(repo_path)
         dependencies_by_language = {}
-        
+        seen_files: set = set()  # Avoid re-reading the same path in the config/SQL pass
+
         # Search for dependency files
         for language, patterns in DEPENDENCY_PATTERNS.items():
             production_deps = []
@@ -1822,7 +1822,8 @@ async def read_dependencies_activity(repo_path: str) -> dict:
                     try:
                         with open(file_path, 'r', encoding='utf-8') as f:
                             content = f.read()
-                        
+                        seen_files.add(file_path.resolve())
+
                         # Get relative path from repo root
                         relative_path = "/" + str(file_path.relative_to(repo_path_obj))
                         
@@ -1904,7 +1905,8 @@ async def read_dependencies_activity(repo_path: str) -> dict:
                     try:
                         with open(file_path, 'r', encoding='utf-8') as f:
                             content = f.read()
-                        
+                        seen_files.add(file_path.resolve())
+
                         relative_path = "/" + str(file_path.relative_to(repo_path_obj))
                         dev_deps.append({
                             "full_path": relative_path,
@@ -1922,6 +1924,15 @@ async def read_dependencies_activity(repo_path: str) -> dict:
                     "developer_only_dependencies": dev_deps
                 }
         
+        config_sql_artifacts = _collect_config_and_schema_files(
+            repo_path_obj, seen_files, activity.logger
+        )
+        if config_sql_artifacts:
+            dependencies_by_language["ConfigAndSchema"] = {
+                "production_dependencies": config_sql_artifacts,
+                "developer_only_dependencies": [],
+            }
+
         # Format dependencies for prompts
         formatted_content = _format_dependencies_for_prompt(dependencies_by_language)
         
@@ -1952,6 +1963,93 @@ async def read_dependencies_activity(repo_path: str) -> dict:
             "raw_dependencies": {},
             "message": f"Error: {str(e)}"
         }
+
+
+# Skip large vendor trees when scanning for extra YAML / SQL / Terraform
+_CONFIG_SCAN_SKIP_DIR_NAMES = frozenset(
+    {
+        ".git",
+        "node_modules",
+        "venv",
+        ".venv",
+        "__pycache__",
+        "dist",
+        "build",
+        "target",
+        "coverage",
+        "htmlcov",
+        "vendor",
+        ".mypy_cache",
+        ".tox",
+        ".eggs",
+        "site-packages",
+        "Pods",
+        "Carthage",
+    }
+)
+
+
+def _path_touches_skipped_config_tree(path: Path) -> bool:
+    try:
+        return any(p in _CONFIG_SCAN_SKIP_DIR_NAMES for p in path.parts)
+    except Exception:
+        return True
+
+
+def _collect_config_and_schema_files(
+    repo_path_obj: Path, seen_files: set, log,
+    *,
+    max_file_bytes: int = 100_000,
+    max_total_bytes: int = 500_000,
+    max_files: int = 50,
+) -> list:
+    """
+    Read additional .yml/.yaml/.sql/.tf/.tfvars files with size and count caps.
+    Complements the dependency-filename pass (gh issue #29).
+    """
+    if not repo_path_obj.is_dir():
+        return []
+    out = []
+    total_bytes = 0
+    for pattern in ("*.yml", "*.yaml", "*.tf", "*.tfvars", "*.sql"):
+        if total_bytes >= max_total_bytes or len(out) >= max_files:
+            break
+        for file_path in sorted(
+            repo_path_obj.rglob(pattern), key=lambda p: str(p).casefold()
+        ):
+            if len(out) >= max_files or total_bytes >= max_total_bytes:
+                break
+            if _path_touches_skipped_config_tree(file_path):
+                continue
+            try:
+                resolved = file_path.resolve()
+            except OSError:
+                continue
+            if resolved in seen_files:
+                continue
+            if not file_path.is_file():
+                continue
+            try:
+                st = file_path.stat()
+            except OSError:
+                continue
+            if st.st_size > max_file_bytes:
+                continue
+            try:
+                raw = file_path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError) as e:
+                log.warning("Skipped %s: %s", file_path, e)
+                continue
+            if len(raw) > max_file_bytes:
+                raw = raw[:max_file_bytes] + "\n... [truncated]\n"
+            chunk = raw.encode("utf-8")
+            if total_bytes + len(chunk) > max_total_bytes:
+                break
+            rel = "/" + str(file_path.relative_to(repo_path_obj))
+            out.append({"full_path": rel, "content": raw})
+            seen_files.add(resolved)
+            total_bytes += len(chunk)
+    return out
 
 
 def _format_dependencies_for_prompt(dependencies: dict) -> str:

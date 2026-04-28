@@ -39,6 +39,40 @@ class ClaudeAnalyzer:
             self.client = Anthropic(api_key=api_key)
             self.logger.info("Using standard Anthropic API")
     
+    @staticmethod
+    def _apply_input_char_limit(prompt: str, logger) -> tuple:
+        """
+        Enforce a maximum size on the full user message. Truncates the tail (keeps
+        the start, where task instructions usually live) when over limit.
+        Set CLAUDE_MAX_INPUT_CHARS=0 to disable.
+        """
+        max_c = int(getattr(Config, "CLAUDE_MAX_INPUT_CHARS", 0) or 0)
+        if max_c <= 0 or len(prompt) <= max_c:
+            return (prompt, False)
+        marker = (
+            "\n\n---\n*Input was truncated to fit `CLAUDE_MAX_INPUT_CHARS`. "
+            "Reduce `REPO_ANALYZER_MAX_TOTAL_KB` / `REPO_ANALYZER_MAX_FILES` / `REPO_ANALYZER_MAX_FILE_KB` "
+            "or raise `CLAUDE_MAX_INPUT_CHARS` if your route allows a larger request.*\n"
+        )
+        budget = max_c - len(marker)
+        if budget <= 0:
+            logger.warning(
+                "CLAUDE_MAX_INPUT_CHARS (%s) is smaller than the truncation notice; "
+                "sending a clipped notice only",
+                max_c,
+            )
+            return (marker[:max_c], True)
+        trimmed = prompt[:budget] + marker
+        if len(trimmed) > max_c:
+            trimmed = trimmed[:max_c]
+        logger.info(
+            "Trimmed prompt from %s to %s characters to satisfy CLAUDE_MAX_INPUT_CHARS=%s",
+            len(prompt),
+            len(trimmed),
+            max_c,
+        )
+        return (trimmed, True)
+
     def _get_model_id(self, model_name: str) -> str:
         """
         Get the appropriate model ID for the current provider.
@@ -125,6 +159,13 @@ class ClaudeAnalyzer:
         else:
             # Remove the placeholder if no context
             prompt = prompt.replace("{previous_context}", "")
+
+        prompt, was_trimmed = self._apply_input_char_limit(prompt, self.logger)
+        if was_trimmed:
+            self.logger.warning(
+                "Prompt was truncated to CLAUDE_MAX_INPUT_CHARS; lower REPO_ANALYZER_MAX_TOTAL_KB "
+                "or REPO_ANALYZER_MAX_FILES, or increase CLAUDE_MAX_INPUT_CHARS if the API allows."
+            )
         
         self.logger.debug(f"Prompt created ({len(prompt)} characters)")
         self.logger.debug(f"Prompt preview (first 1000 chars): {prompt[:1000]}...")

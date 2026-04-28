@@ -165,6 +165,34 @@ Some content here"""
         self.assertTrue(any("Removed version line" in call for call in debug_calls))
         self.assertTrue(any("Cleaned prompt" in call for call in debug_calls))
 
+    def test_apply_input_char_limit_trims_tail(self):
+        """Long prompts are cut to CLAUDE_MAX_INPUT_CHARS (keeps head)."""
+        from investigator.core.config import Config
+
+        with patch.object(Config, "CLAUDE_MAX_INPUT_CHARS", 400):
+            p, was = ClaudeAnalyzer._apply_input_char_limit("A" * 2000, self.mock_logger)
+        self.assertTrue(was)
+        self.assertLessEqual(len(p), 400)
+        self.assertTrue(p.startswith("A" * 32))  # head preserved
+        self.assertIn("CLAUDE_MAX_INPUT_CHARS", p)
+
+    @patch("anthropic.Anthropic")
+    def test_analyze_with_context_respects_max_input(self, mock_anthropic):
+        from investigator.core.config import Config
+
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.content = [Mock(text="out")]
+        mock_client.messages.create.return_value = mock_response
+        mock_anthropic.return_value = mock_client
+        log = Mock()
+        analyzer = ClaudeAnalyzer("k", log)
+        with patch.object(Config, "CLAUDE_MAX_INPUT_CHARS", 500):
+            analyzer.analyze_with_context("T: {repo_structure}", "R" * 10000, None)
+        sent = mock_client.messages.create.call_args[1]["messages"][0]["content"]
+        self.assertLessEqual(len(sent), 500)
+        self.assertIn("truncated", sent.lower())
+
 
 if __name__ == "__main__":
     unittest.main()
