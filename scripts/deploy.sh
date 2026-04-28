@@ -56,11 +56,10 @@ build_image() {
     | docker login --username AWS --password-stdin "$ECR_REGISTRY_VALUE"
 
   echo "Building and pushing image ${IMAGE_URI}"
-  docker buildx build \
-    --platform linux/amd64,linux/arm64 \
-    -t "$IMAGE_URI" \
-    --push \
-    .
+
+  docker buildx build --platform linux/amd64,linux/arm64 -t "$IMAGE_URI" .
+
+  docker push "$IMAGE_URI"
 }
 
 deploy_k8s() {

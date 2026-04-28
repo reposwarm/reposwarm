@@ -249,6 +249,86 @@ RepoSwarm was born out of a hackathon at [Verbit](https://verbit.ai/), built by:
 
 ---
 
+## Fork Dev + Deploy Workflow
+
+This fork includes a scripted path for day-to-day development and EKS deployment.
+
+### 1) Make Changes Locally
+
+```bash
+# Install dependencies in the project virtual environment
+uv sync
+
+# Run unit tests while iterating
+python3 -m pytest tests/unit -v --tb=short
+```
+
+Recommended loop:
+- Update code (for example `src/`, `Dockerfile`, or `k8s/reposwarm.yaml`)
+- Run `python3 -m pytest tests/unit -v --tb=short` before committing
+- Commit and push your branch to your fork
+
+### 2) Build and Push Worker Image
+
+```bash
+# Build + push multi-arch image (linux/amd64, linux/arm64)
+scripts/deploy.sh build
+```
+
+The deploy script auto-detects Docker Buildx vs Podman Buildx behavior and uses a compatible push path.
+
+This command logs in to ECR and pushes:
+- Registry: `219277046067.dkr.ecr.ap-southeast-2.amazonaws.com`
+- Image: `chen-test-cve`
+- Tag: `reposwarm-latest`
+
+### 3) Deploy to Kubernetes
+
+```bash
+# Apply k8s manifest only
+scripts/deploy.sh deploy
+```
+
+### 4) Build + Deploy in One Step
+
+```bash
+scripts/deploy.sh all
+# or simply:
+scripts/deploy.sh
+```
+
+### 5) Environment Overrides
+
+`scripts/deploy.sh` supports environment overrides:
+
+- `AWS_PROFILE` (default: `niro-dev`)
+- `AWS_REGION` (default: `ap-southeast-2`)
+- `ECR_REGISTRY` (default: `219277046067.dkr.ecr.ap-southeast-2.amazonaws.com`)
+- `IMAGE_NAME` (default: `chen-test-cve`)
+- `IMAGE_TAG` (default: `reposwarm-latest`)
+- `KUBECONFIG` (default: `$HOME/.kube/config-dev.yaml`)
+- `K8S_MANIFEST` (default: `k8s/reposwarm.yaml`)
+
+Example:
+
+```bash
+AWS_PROFILE=niro-prod IMAGE_TAG=2026-04-28-1 scripts/deploy.sh all
+```
+
+### 6) Deployment Verification
+
+After deploy:
+
+```bash
+kubectl get pods -n reposwarm
+kubectl get deploy -n reposwarm
+kubectl logs deploy/reposwarm-worker -n reposwarm --tail=100
+```
+
+If you change `IMAGE_NAME` or `IMAGE_TAG`, make sure `k8s/reposwarm.yaml` references the same image URI.
+
+---
+
 ## Recent Fixes (2026-03-23)
 
 ### 🔧 DynamoDB Local — Table Creation Fails on Fresh Install
