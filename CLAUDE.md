@@ -38,27 +38,27 @@ mise test-integration    # tests/integration, -m "not slow"
 mise test-all            # both
 ```
 
-Locally the system Python is 3.13 and `pydantic-core` fails to build there — pin 3.12:
+Development tasks and Docker use Python 3.12; CI tests Python 3.12 and 3.13. Use Python 3.12 to match the development environment:
 
 ```bash
 uv run --python 3.12 python -m pytest tests/unit/test_config.py -q
-uv run --python 3.12 python -m pytest tests/unit/test_config.py::TestConfig::test_x -q
+uv run --python 3.12 python -m pytest tests/unit/test_config.py::TestArchHubURLConstruction::test_get_arch_hub_repo_url_with_org_url -q
 ```
 
-Every test file bootstraps its own `sys.path.insert(...'src')`; follow that pattern in new test files rather than relying on package installation. Unit tests mock `temporalio` at import time where needed (see `tests/unit/test_worker_identity.py`) — do not assume the worker module is importable without it.
+Tests add `src` to `sys.path` with `append` or `insert`; follow the nearby test's setup rather than relying on package installation. Unit tests mock `temporalio` at import time where needed (see `tests/unit/test_worker_identity.py`) — do not assume the worker module is importable without it.
 
 ## Architecture
 
 ### Two workflows, one task queue
 
-Everything runs on task queue `investigate-task-queue`, registered in `src/investigate_worker.py` (the real entry point; `src/worker.py` is an env-validation variant).
+The default task queue is `investigate-task-queue`. Worker/client configuration reads `TEMPORAL_TASK_QUEUE`, while the parent workflow currently hardcodes its child-workflow queue to the default. Workers are registered in `src/investigate_worker.py` (the real entry point; `src/worker.py` is an env-validation variant).
 
 - **`InvestigateReposWorkflow`** (`src/workflows/investigate_repos_workflow.py`) — the long-running parent. Refreshes `prompts/repos.json` from the configured git provider, then starts `InvestigateSingleRepoWorkflow` child workflows in **chunks** (`chunk_size`, default 8), awaiting each chunk before starting the next. After the cycle it sleeps `sleep_hours` (default 6) and calls `continue_as_new`, so `force` only applies on `iteration_count == 0`.
 - **`InvestigateSingleRepoWorkflow`** (`src/workflows/investigate_single_repo_workflow.py`) — the actual 8-step pipeline, exposed as `get_progress`/`get_status` Temporal queries. Order matters and is subtle: prompts config is loaded **before** the cache check (step 1.5) because prompt versions are an input to the cache decision.
 
 Pipeline: health check → clone → load prompts config → cache check (early-return "skipped") → structure analysis → read/cache dependencies → per-prompt Claude calls → write arch file → push to arch hub → save metadata to DynamoDB → cleanup temp dir.
 
-Ordering constraint: metadata is saved to DynamoDB **only after** a successful arch-hub push. A failed hub push raises and fails the workflow, so the repo is not marked as investigated and will be retried next cycle. Don't reorder these.
+Ordering constraint: metadata is saved to DynamoDB **after the hub-save step**. A failed hub save raises before metadata is written, so the repo is not marked as investigated and can be retried next cycle. A skipped hub save or successful local-folder save still allows metadata to be recorded. Preserve this ordering.
 
 ### Workflow sandbox discipline
 
@@ -88,7 +88,7 @@ A step may declare `context: [{"type": "step", "val": "hl_overview"}]`; the work
 
 `src/utils/prompt_context.py` is a factory over `PromptContextBase`: DynamoDB (`prompt_context_dynamodb.py`) or local files under `./temp/prompt_context_storage/` (`prompt_context_file.py`). Selection is `PROMPT_CONTEXT_STORAGE` = `file` | `dynamodb` | `auto` (auto sniffs `DYNAMODB_*`, ECS metadata, AWS creds, `TEMPORAL_WORKER`). Large prompt payloads are chunked across DynamoDB items; items carry TTLs.
 
-Prompt/result content is **never passed through Temporal payloads** — activities exchange reference keys and the receiving activity fetches content from storage. Preserve that when adding steps; workflow history size is a real constraint here (hence `continue_as_new`).
+Claude-analysis activities use storage reference keys to retrieve context. Some surrounding activities still pass full prompt, structure, dependency, and result content through Temporal payloads. Prefer references when adding large payloads; workflow history size is a real constraint here (hence `continue_as_new`).
 
 ### Multi-provider seams
 

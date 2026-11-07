@@ -1,4 +1,20 @@
-# 🤖 RepoSwarm
+# How do you give AI coding agents context across multiple repositories?
+
+RepoSwarm analyzes repositories and generates standardized `.arch.md` architecture files.
+It commits the results to a shared hub repository that coding agents can read as context.
+
+Add that hub to your agent's workspace so it can consult architecture documentation across repositories.
+Architects and developers can use the same output for onboarding and architecture reviews.
+Generated findings need human review.
+
+- **Git providers:** GitHub, GitLab, AWS CodeCommit, Azure DevOps and Bitbucket.
+- **Model backends:** Anthropic API, Amazon Bedrock or a LiteLLM proxy.
+- **Updates:** checks repository commits, branches and prompt versions to decide when to re-analyze.
+- **Caching:** reuse prompt results stored in DynamoDB or local files; repository-level update checks use DynamoDB.
+- **Runs with Temporal workflows.** Local setup requires running Docker, Docker Compose and Git.
+- **License:** Apache-2.0.
+
+[See generated output](https://github.com/royosherove/repo-swarm-sample-results-hub/blob/main/repo-swarm.arch.md) · [Install and run](https://github.com/reposwarm/reposwarm-cli) · [How agent context works](https://robotpaper.ai/reposwarm-give-ai-agents-context-across-all-your-repos/)
 
 <p align="center">
   <img src="assets/banner-nodes.png" alt="RepoSwarm - Multi-Repo Architecture Discovery" width="100%">
@@ -77,7 +93,7 @@ RepoSwarm automatically analyzes your entire codebase portfolio and generates st
 
 - 🔍 **AI-Powered Analysis** — Uses Claude to deeply understand codebases
 - 📝 **Standardized Output** — Generates consistent `.arch.md` architecture files
-- 🔄 **Incremental Updates** — Only re-analyzes repos with new commits
+- 🔄 **Incremental Updates** — Checks repository commits, branches, and prompt versions to decide when to re-analyze
 - 💾 **Smart Caching** — DynamoDB or file-based caching avoids redundant work
 - 🎯 **Type-Aware Prompts** — Specialized analysis for backend, frontend, mobile, infra, and libraries
 - 📦 **Results Hub** — All architecture docs committed to a centralized repository
