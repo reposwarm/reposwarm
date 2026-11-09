@@ -25,6 +25,10 @@ Generated findings need human review.
 </p>
 
 <p align="center">
+  <a href="https://reposwarm.ai/"><img src="https://img.shields.io/badge/Visit_RepoSwarm_website-reposwarm.ai-0A66C2.svg?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Visit RepoSwarm website" title="Visit RepoSwarm website"></a>
+</p>
+
+<p align="center">
   <a href="https://github.com/reposwarm/reposwarm/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=for-the-badge" alt="License"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/Python-3.12+-3776AB.svg?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.12+"></a>
   <a href="https://www.youtube.com/watch?v=rOMf9xvpgtc"><img src="https://img.shields.io/badge/Demo-YouTube-red.svg?style=for-the-badge&logo=youtube" alt="YouTube Demo"></a>
