@@ -1,4 +1,4 @@
-version=2
+version=3
 You are a DevOps architect and deployment specialist. Analyze all deployment processes, CI/CD pipelines, and infrastructure provisioning in this codebase.
 
 **Special Instruction**: If no deployment mechanisms are found, return "no deployment mechanisms detected". Only document deployment mechanisms that are ACTUALLY present in the codebase. Do NOT list deployment tools, platforms, or practices that are not implemented.
@@ -379,6 +379,8 @@ For each finding, provide:
 - **Fix Needed:** How to address the issue
 
 Format the output clearly using markdown
+
+{previous_context}
 
 ---
 

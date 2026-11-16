@@ -1,4 +1,4 @@
-version=1
+version=2
 You are a security architect specializing in authorization. Analyze all authorization mechanisms, access control, and permission systems in this codebase.
 
 **Special Instruction**: If no authorization mechanisms are found, return "no authorization mechanisms detected". Only document authorization systems that are ACTUALLY implemented in the codebase. Do NOT list authorization methods, frameworks, or tools that are not present.
@@ -254,6 +254,8 @@ For each authorization mechanism, provide:
 - **Security Issues:** Problems found in current implementation
 
 Format the output clearly using markdown
+
+{previous_context}
 
 ---
 

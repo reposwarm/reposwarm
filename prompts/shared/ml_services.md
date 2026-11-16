@@ -1,4 +1,4 @@
-version=3
+version=4
 # 3rd Party ML Services and Technologies Analysis
 
 You are a machine learning and AI systems analyst. Analyze this codebase to identify and document all 3rd party machine learning services, AI technologies, and ML-related integrations.
@@ -83,6 +83,8 @@ Conclude with:
 - **Major Dependencies**: Most critical ML dependencies
 - **Architecture Pattern**: Overall ML architecture approach (API-first, self-hosted, hybrid)
 - **Risk Assessment:** Key risks and dependencies on external ML services
+
+{previous_context}
 
 ---
 

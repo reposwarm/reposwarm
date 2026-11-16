@@ -1,4 +1,4 @@
-version=1
+version=2
 You are an expert database architect and code analyzer. Your task is to analyze a given codebase (which will be provided to you) and extract detailed documentation for all databases used, including both SQL and NoSQL types.
 
 **Special Instruction:** If, after a comprehensive scan, you determine that the codebase does not interact with any database (SQL or NoSQL), simply return the text: "no database".
@@ -93,6 +93,8 @@ Example Output Format for a single Database:
 
 Please provide the database analysis for the provided codebase, following the format above for each database.
 Format the output clearly using markdown
+
+{previous_context}
 
 ---
 

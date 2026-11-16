@@ -1,4 +1,4 @@
-version=1
+version=2
 You are a security architect specializing in authentication. Analyze all authentication mechanisms, identity management, and access control implementations in this codebase.
 
 **Special Instruction**: If no authentication mechanisms are found, return "no authentication mechanisms detected". Only document authentication systems that are ACTUALLY implemented in the codebase. Do NOT list authentication methods, frameworks, or tools that are not present.
@@ -171,6 +171,8 @@ For each authentication mechanism found, provide:
 - **Issues Identified:** Problems found in current implementation
 
 Format the output clearly using markdown
+
+{previous_context}
 
 ---
 

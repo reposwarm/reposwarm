@@ -1,4 +1,4 @@
-version=1
+version=2
 
 You are a software architect who is an experts with feature flag systems , CI-CD and things related to them. Analyze all feature flag implementations and usage in this codebase.
 
@@ -80,6 +80,8 @@ Group flags by purpose:
 **Configuration:** [List flags controlling behavior/settings]
 
 Format the output clearly using markdown
+
+{previous_context}
 
 ---
 

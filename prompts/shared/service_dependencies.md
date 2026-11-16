@@ -1,4 +1,4 @@
-version=4
+version=5
 You are an expert software architect and code analyzer. Your task is to analyze a given codebase (which will be provided to you) and identify all its external dependencies.
 
 Definition of an External Dependency: An "external dependency" in this context refers to any service (internal or external), library, or resource that is not part of the codebase itself but is required for the codebase to function correctly during runtime. These dependencies typically reside outside the immediate project's source code and are often managed via package managers, API calls, or configuration.
@@ -54,6 +54,8 @@ Clarity and Detail: Provide clear, concise descriptions, but include enough deta
 —
 
 Format the output clearly using markdown
+
+{previous_context}
 
 ---
 

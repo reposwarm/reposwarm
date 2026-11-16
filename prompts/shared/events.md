@@ -1,4 +1,4 @@
-version=1
+version=2
 You are an expert event documentation assistant. Your task is to analyze a given codebase (which will be provided to you) and extract detailed documentation for all events that the code is either consuming or producing.
 
 **Special Instruction**: If, after a comprehensive scan, you determine that the codebase does not contain any events, simply return the text: "no events".
@@ -72,6 +72,8 @@ Example Output Format for a single Event:
 
 Please provide the documentation for all events found in the provided codebase, following the format above for each event.
 Format the output clearly using markdown.
+
+{previous_context}
 
 ---
 
