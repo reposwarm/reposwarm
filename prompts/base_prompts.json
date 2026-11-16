@@ -24,22 +24,34 @@
     {
       "name": "core_entities",
       "file": "../shared/core_entities.md",
-      "description": "Core entities and their relationships"
+      "description": "Core entities and their relationships",
+      "context": [
+        {"type": "step", "val": "hl_overview"}
+      ]
     },
     {
       "name": "DBs",
       "file": "../shared/db.md",
-      "description": "databases analysis"
+      "description": "databases analysis",
+      "context": [
+        {"type": "step", "val": "hl_overview"}
+      ]
     },
     {
       "name": "APIs",
       "file": "../shared/apis.md",
-      "description": "APIs analysis"
+      "description": "APIs analysis",
+      "context": [
+        {"type": "step", "val": "hl_overview"}
+      ]
     },
     {
       "name": "events",
       "file": "../shared/events.md",
-      "description": "events analysis"
+      "description": "events analysis",
+      "context": [
+        {"type": "step", "val": "hl_overview"}
+      ]
     },
     {
       "name": "service_dependencies",
@@ -63,27 +75,42 @@
     {
       "name": "authentication",
       "file": "../shared/authentication.md",
-      "description": "Authentication mechanisms analysis"
+      "description": "Authentication mechanisms analysis",
+      "context": [
+        {"type": "step", "val": "hl_overview"}
+      ]
     },
     {
       "name": "authorization",
       "file": "../shared/authorization.md",
-      "description": "Authorization and access control analysis"
+      "description": "Authorization and access control analysis",
+      "context": [
+        {"type": "step", "val": "hl_overview"}
+      ]
     },
     {
       "name": "data_mapping",
       "file": "../shared/data_mapping.md",
-      "description": "Data flow and personal information mapping"
+      "description": "Data flow and personal information mapping",
+      "context": [
+        {"type": "step", "val": "hl_overview"}
+      ]
     },
     {
       "name": "security_check",
       "file": "../shared/security_check.md",
-      "description": "Top 10 security vulnerabilities assessment"
+      "description": "Top 10 security vulnerabilities assessment",
+      "context": [
+        {"type": "step", "val": "hl_overview"}
+      ]
     },
     {
       "name": "monitoring",
       "file": "../shared/monitoring.md",
-      "description": "Monitoring, logging, metrics, and observability analysis"
+      "description": "Monitoring, logging, metrics, and observability analysis",
+      "context": [
+        {"type": "step", "val": "hl_overview"}
+      ]
     },
     {
       "name": "ml_services",

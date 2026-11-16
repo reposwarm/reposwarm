@@ -1,4 +1,4 @@
-version=1
+version=2
 You are a data privacy and compliance expert tasked with creating a comprehensive data mapping analysis. Analyze how data, especially personal information, flows through this system from collection to storage, processing, and sharing.
 
 **Special Instruction**: Focus on identifying personal data, sensitive information, and compliance-relevant data flows. If no data processing is found, return "no data processing detected". Only document data processing mechanisms that are ACTUALLY implemented in the codebase. Do NOT list data protection tools, compliance frameworks, or privacy technologies that are not present.
@@ -251,6 +251,8 @@ For each significant data flow, provide:
 - **Error Handling:** How failures are managed
 
 Format the output clearly using markdown, creating a comprehensive data map that can be used for compliance, security reviews, and operational understanding.
+
+{previous_context}
 
 ---
 

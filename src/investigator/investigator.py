@@ -289,6 +289,7 @@ class ClaudeInvestigator:
             The exact prompt string that will be sent to Claude
         """
         # Replace placeholders in the prompt
+        prompt_template = self.claude_analyzer.ensure_context_placeholder(prompt_template, previous_context)
         prompt = prompt_template.replace("{repo_structure}", repo_structure)
         
         # Add previous context if available

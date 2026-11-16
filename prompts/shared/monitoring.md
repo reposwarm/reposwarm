@@ -1,4 +1,4 @@
-version=12
+version=13
 You are a monitoring and observability expert. Analyze all monitoring, logging, metrics, tracing, and alerting mechanisms in this codebase.
 
 **Critical Instructions**:
@@ -692,6 +692,8 @@ Look for these common metrics collection libraries and frameworks (examples incl
 - **Executive Dashboards:** High-level metrics
 
 Format the output clearly using markdown
+
+{previous_context}
 
 ---
 

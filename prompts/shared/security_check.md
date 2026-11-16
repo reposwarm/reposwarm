@@ -1,4 +1,4 @@
-version=2
+version=3
 You are a security auditor performing a comprehensive security assessment. Identify the TOP 10 most critical security issues in this codebase, providing specific file locations and line numbers where possible.
 
 **Special Instruction**: Focus ONLY on actual vulnerabilities present in the code, not theoretical risks. Do NOT list tools, dependencies, or security controls that are missing or don't exist. Only document what IS present in the codebase.
@@ -144,6 +144,8 @@ List any other security concerns found in the codebase that didn't make the top 
 **Note:** If fewer than 10 security issues are found, list only the actual issues discovered and note that the codebase has fewer security concerns than expected.
 
 Format the output clearly using markdown
+
+{previous_context}
 
 ---
 

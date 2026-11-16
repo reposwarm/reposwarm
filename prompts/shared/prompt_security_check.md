@@ -1,4 +1,4 @@
-version=2
+version=3
 # Prompt Injection and LLM Security Assessment
 
 You are a security auditor specializing in LLM and prompt injection vulnerabilities. First, identify all LLM usage in this codebase, then analyze for security issues based on the "lethal trifecta" framework and other known attack vectors.
@@ -619,6 +619,8 @@ Document which security controls are present or absent:
 - [ ] Security testing [Implemented/Not Implemented]
 
 **Note:** Focus on actual vulnerabilities present in the code with specific file locations and line numbers. Avoid theoretical risks without concrete evidence in the codebase.
+
+{previous_context}
 
 ---
 

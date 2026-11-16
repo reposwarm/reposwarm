@@ -7,6 +7,47 @@ from typing import Optional
 from .config import Config
 
 
+CONTEXT_PLACEHOLDER = "{previous_context}"
+
+# The shared prompts end with this block. A missing context placeholder is
+# put before it, so the context comes before the repository data.
+REPO_STRUCTURE_SECTION = "\n---\n\n## Repository Structure and Files"
+
+
+def ensure_context_placeholder(prompt_template: str, previous_context: Optional[str],
+                               logger=None) -> str:
+    """
+    Make sure that a prompt template can receive the previous context.
+
+    A step can declare "context" in prompts.json, but its prompt file can
+    have no {previous_context} placeholder. Before this function, the context
+    was then dropped with no message. If there is context and no placeholder,
+    this function adds the placeholder before the repository structure
+    section, or at the end of the template if that section is not found.
+
+    Args:
+        prompt_template: Prompt template (version line already removed)
+        previous_context: Previous analysis results, or None
+        logger: Optional logger for a warning
+
+    Returns:
+        The template, with a {previous_context} placeholder if it needs one
+    """
+    if not previous_context or not prompt_template or CONTEXT_PLACEHOLDER in prompt_template:
+        return prompt_template
+
+    if logger is not None:
+        logger.warning(
+            "Prompt has context but no {previous_context} placeholder; "
+            "adding the context before the repository structure"
+        )
+
+    index = prompt_template.rfind(REPO_STRUCTURE_SECTION)
+    if index == -1:
+        return f"{prompt_template.rstrip()}\n\n{CONTEXT_PLACEHOLDER}\n"
+    return f"{prompt_template[:index]}\n{CONTEXT_PLACEHOLDER}\n{prompt_template[index:]}"
+
+
 class ClaudeAnalyzer:
     """Handles Claude API interactions for analysis."""
 
@@ -94,6 +135,11 @@ class ClaudeAnalyzer:
             # No version line found, return as-is
             return prompt_template
     
+    def ensure_context_placeholder(self, prompt_template: str,
+                                   previous_context: Optional[str]) -> str:
+        """Add a {previous_context} placeholder if the template needs one."""
+        return ensure_context_placeholder(prompt_template, previous_context, self.logger)
+
     def analyze_with_context(self, prompt_template: str, repo_structure: str, 
                            previous_context: Optional[str] = None,
                            config_overrides: Optional[dict] = None) -> str:
@@ -114,6 +160,7 @@ class ClaudeAnalyzer:
         
         # Clean the prompt template first (remove version lines, etc.)
         cleaned_template = self.clean_prompt(prompt_template)
+        cleaned_template = self.ensure_context_placeholder(cleaned_template, previous_context)
         
         # Replace placeholders in the cleaned prompt
         prompt = cleaned_template.replace("{repo_structure}", repo_structure)
